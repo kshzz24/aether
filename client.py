@@ -1,7 +1,8 @@
+import json
 from dataclasses import dataclass
 from typing import Literal, Protocol
+
 from anthropic import AsyncAnthropic
-import json
 from openai import AsyncOpenAI
 
 
@@ -76,6 +77,16 @@ class AnthropicClient(LLMClient):
             out.append({"role": m.role, "content": content})
         return out
 
+    def _to_anthropic_tools(self, tools: list[dict]) -> list[dict]:
+        return [
+            {
+                "name": t["name"],
+                "description": t["description"],
+                "input_schema": t["parameters"],
+            }
+            for t in tools
+        ]
+
     async def create(self, messages, tools, system) -> NormalizedResponse:
 
         response = await self._client.messages.create(
@@ -83,7 +94,7 @@ class AnthropicClient(LLMClient):
             max_tokens=4096,
             system=system,
             messages=self._to_anthropic(messages=messages),
-            tools=tools,
+            tools=self._to_anthropic_tools(tools),
         )
 
         blocks = []
