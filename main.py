@@ -67,11 +67,17 @@ def main() -> None:
     parser.add_argument("--provider", default="anthropic", help="LLM provider")
     parser.add_argument("--model", default="claude-opus-4-8", help="model id")
     parser.add_argument(
-        "--max-iter", dest="max_iter", type=int, default=25,
+        "--max-iter",
+        dest="max_iter",
+        type=int,
+        default=25,
         help="maximum agent loop iterations",
     )
     parser.add_argument(
-        "--max-cost", dest="max_cost", type=float, default=1.0,
+        "--max-cost",
+        dest="max_cost",
+        type=float,
+        default=1.0,
         help="maximum spend in USD before the run aborts",
     )
     args = parser.parse_args()

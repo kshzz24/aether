@@ -6,6 +6,7 @@ from client import (
     Message,
     TextBlock,
     ToolCallBlock,
+    ToolCallingUnsupportedError,
     ToolResultBlock,
 )
 from events import (
@@ -59,11 +60,14 @@ class Agent:
 
             yield StatusEvent(type="status", message="thinking")
 
-            response = await self.client.create(
-                messages=messages, tools=tools_schemas, system=self.system
-            )
+            try:
+                response = await self.client.create(
+                    messages=messages, tools=tools_schemas, system=self.system
+                )
+            except ToolCallingUnsupportedError as e:
+                yield StatusEvent(type="status", message=f"stopped: {e}")
+                return
 
-            # TODO 4: increment BEFORE yielding so the reported total includes
             # this turn's cost.
             current_cost = self._price(response.input_tokens, response.output_tokens)
             total_cost += current_cost
@@ -79,11 +83,9 @@ class Agent:
 
             messages.append(Message(role="assistant", blocks=response.blocks))
 
-            # TODO 1: the model gave a final answer -> we are done.
             if response.stop_reason != "tool_use":
                 return
 
-            # TODO 3: cost cap must emit a status event, not a bare break.
             if total_cost >= self.max_cost_usd:
                 yield StatusEvent(type="status", message="stopped: cost limit reached")
                 return
@@ -116,5 +118,4 @@ class Agent:
             if tool_results:
                 messages.append(Message(role="user", blocks=tool_results))
 
-        # TODO 3: iteration cap must also emit a clean status event.
         yield StatusEvent(type="status", message="stopped: max iterations reached")

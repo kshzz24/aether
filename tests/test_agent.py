@@ -5,6 +5,7 @@ from client import (
     NormalizedResponse,
     TextBlock,
     ToolCallBlock,
+    ToolCallingUnsupportedError,
     ToolResultBlock,
 )
 from events import (
@@ -126,6 +127,26 @@ def test_cost_cap_stops_cleanly():
     assert isinstance(events[-1], StatusEvent)
     assert events[-1].message == "stopped: cost limit reached"
     assert not any(isinstance(e, ToolResultEvent) for e in events)
+
+
+def test_unsupported_tool_calling_stops_gracefully():
+    class RaisingClient:
+        async def create(self, messages, tools, system):
+            raise ToolCallingUnsupportedError("llama-3.3-70b-versatile")
+
+    agent = Agent(
+        client=RaisingClient(), model="m",
+        tools={}, system="s", max_iterations=5, max_cost_usd=10.0,
+        pricing={"m": (0.0, 0.0)},
+    )
+
+    events = collect(agent, "go")
+
+    # ends on a clean status event, not a traceback
+    assert isinstance(events[-1], StatusEvent)
+    assert events[-1].message.startswith("stopped:")
+    assert "llama-3.3-70b-versatile" in events[-1].message
+    assert "does not support tool calling" in events[-1].message
 
 
 def test_tool_failure_becomes_observation():

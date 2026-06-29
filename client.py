@@ -3,7 +3,24 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from anthropic import AsyncAnthropic
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, BadRequestError
+
+
+class ToolCallingUnsupportedError(Exception):
+    """The model could not emit a valid tool call.
+
+    Raised when the provider rejects the generation because the model produced
+    malformed tool-call output (e.g. Groq's ``tool_use_failed``). Typically
+    means the model does not reliably support tool calling. Normalized here so
+    the agent loop never sees a provider-specific SDK exception.
+    """
+
+    def __init__(self, model: str) -> None:
+        self.model = model
+        super().__init__(
+            f"model '{model}' could not produce a valid tool call; "
+            "it likely does not support tool calling"
+        )
 
 
 @dataclass
@@ -178,11 +195,16 @@ class OpenAICompatibleClient(LLMClient):
             for t in tools
         ]
 
-        response = await self._client.chat.completions.create(
-            model=self._model,
-            messages=full_messages,
-            tools=openai_tools or None,
-        )
+        try:
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                messages=full_messages,
+                tools=openai_tools or None,
+            )
+        except BadRequestError as e:
+            if getattr(e, "code", None) == "tool_use_failed":
+                raise ToolCallingUnsupportedError(self._model) from e
+            raise
 
         message = response.choices[0].message
         blocks = []
