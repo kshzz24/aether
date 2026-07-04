@@ -1,0 +1,6 @@
+[groq]
+"openai/gpt-oss-120b"     = { input = 0.15, output = 0.75 }
+"llama-3.3-70b-versatile" = { input = 0.59, output = 0.79 }
+
+[anthropic]
+"claude-opus-4-8" = { input = 5, output = 25 }
