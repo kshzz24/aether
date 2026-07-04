@@ -251,7 +251,7 @@ class OpenAICompatibleClient(LLMClient):
         output_tokens = response.usage.completion_tokens
 
         cost_usd = cost(
-            self._rate, self._model, in_token=input_tokens, out_token=output_tokens
+            self._rates, self._model, in_token=input_tokens, out_token=output_tokens
         )
 
         return NormalizedResponse(
