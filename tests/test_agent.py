@@ -56,11 +56,11 @@ def test_happy_path_runs_tool_then_finishes():
     responses = [
         NormalizedResponse(
             blocks=[ToolCallBlock(id="c1", name="echo", arguments={"n": 1})],
-            input_tokens=10, output_tokens=5, stop_reason="tool_use",
+            input_tokens=10, output_tokens=5, cost_usd=0.0, stop_reason="tool_use",
         ),
         NormalizedResponse(
             blocks=[TextBlock(text="all done")],
-            input_tokens=4, output_tokens=2, stop_reason="end_turn",
+            input_tokens=4, output_tokens=2, cost_usd=0.0, stop_reason="end_turn",
         ),
     ]
     client = StubClient(responses)
@@ -68,7 +68,6 @@ def test_happy_path_runs_tool_then_finishes():
         client=client, model="m",
         tools={"echo": make_tool("echo", echo)},
         system="sys", max_iterations=5, max_cost_usd=1.0,
-        pricing={"m": (0.0, 0.0)},
     )
 
     events = collect(agent, "do it")
@@ -90,14 +89,13 @@ def test_iteration_cap_stops_cleanly():
 
     forever = NormalizedResponse(
         blocks=[ToolCallBlock(id="c1", name="echo", arguments={})],
-        input_tokens=1, output_tokens=1, stop_reason="tool_use",
+        input_tokens=1, output_tokens=1, cost_usd=0.0, stop_reason="tool_use",
     )
     client = StubClient([forever])
     agent = Agent(
         client=client, model="m",
         tools={"echo": make_tool("echo", echo)},
         system="s", max_iterations=1, max_cost_usd=99.0,
-        pricing={"m": (0.0, 0.0)},
     )
 
     events = collect(agent, "go")
@@ -112,14 +110,13 @@ def test_cost_cap_stops_cleanly():
 
     resp = NormalizedResponse(
         blocks=[ToolCallBlock(id="c1", name="echo", arguments={})],
-        input_tokens=10, output_tokens=10, stop_reason="tool_use",
+        input_tokens=10, output_tokens=10, cost_usd=2.0, stop_reason="tool_use",
     )
     client = StubClient([resp])
     agent = Agent(
         client=client, model="m",
         tools={"echo": make_tool("echo", echo)},
         system="s", max_iterations=10, max_cost_usd=1.0,
-        pricing={"m": (1.0, 1.0)},
     )
 
     events = collect(agent, "go")
@@ -137,7 +134,6 @@ def test_unsupported_tool_calling_stops_gracefully():
     agent = Agent(
         client=RaisingClient(), model="m",
         tools={}, system="s", max_iterations=5, max_cost_usd=10.0,
-        pricing={"m": (0.0, 0.0)},
     )
 
     events = collect(agent, "go")
@@ -156,11 +152,11 @@ def test_tool_failure_becomes_observation():
     responses = [
         NormalizedResponse(
             blocks=[ToolCallBlock(id="c1", name="boom", arguments={})],
-            input_tokens=1, output_tokens=1, stop_reason="tool_use",
+            input_tokens=1, output_tokens=1, cost_usd=0.0, stop_reason="tool_use",
         ),
         NormalizedResponse(
             blocks=[TextBlock(text="recovered")],
-            input_tokens=1, output_tokens=1, stop_reason="end_turn",
+            input_tokens=1, output_tokens=1, cost_usd=0.0, stop_reason="end_turn",
         ),
     ]
     client = StubClient(responses)
@@ -168,7 +164,6 @@ def test_tool_failure_becomes_observation():
         client=client, model="m",
         tools={"boom": make_tool("boom", boom)},
         system="s", max_iterations=5, max_cost_usd=10.0,
-        pricing={"m": (0.0, 0.0)},
     )
 
     events = collect(agent, "go")

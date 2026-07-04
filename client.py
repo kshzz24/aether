@@ -1,4 +1,5 @@
 import json
+import logging
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
@@ -52,7 +53,17 @@ class NormalizedResponse:
     blocks: list[TextBlock | ToolCallBlock]
     input_tokens: int
     output_tokens: int
+    cost_usd: float
     stop_reason: Literal["end_turn", "tool_use", "max_tokens", "stop"]
+
+
+def cost(rates, model, in_token, out_token) -> float:
+
+    row = rates.get(model)
+    if row is None:
+        logging.warning("no price for model %r; metering as $0", model)
+        return 0.0
+    return (in_token * row["input"] + out_token * row["output"]) / 1_000_000
 
 
 class LLMClient(Protocol):
@@ -63,9 +74,11 @@ class LLMClient(Protocol):
 
 
 class AnthropicClient(LLMClient):
-    def __init__(self, model: str, api_key: str):
+    def __init__(self, model: str, api_key: str, rates: dict[str, dict]):
         self._client = AsyncAnthropic(api_key=api_key)
         self._model = model
+        self._provider = "anthropic"
+        self._rates = rates
 
     def _to_anthropic(self, messages: list[Message]) -> list[dict]:
         out = []
@@ -114,8 +127,12 @@ class AnthropicClient(LLMClient):
             tools=self._to_anthropic_tools(tools),
         )
 
+        input_tokens = response.usage.input_tokens
+        output_tokens = response.usage.output_tokens
         blocks = []
-
+        cost_usd = cost(
+            self._rates, self._model, in_token=input_tokens, out_token=output_tokens
+        )
         for block in response.content:
 
             if block.type == "text":
@@ -128,17 +145,19 @@ class AnthropicClient(LLMClient):
 
         return NormalizedResponse(
             blocks=blocks,
-            input_tokens=response.usage.input_tokens,
-            output_tokens=response.usage.output_tokens,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             stop_reason=response.stop_reason,
+            cost_usd=cost_usd,
         )
 
 
 class OpenAICompatibleClient(LLMClient):
 
-    def __init__(self, model: str, api_key: str, base_url: str):
+    def __init__(self, model: str, api_key: str, base_url: str, rates: dict[str, dict]):
         self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         self._model = model
+        self._rates = rates
 
     def _to_openai(self, messages: list[Message]) -> list[dict]:
         out = []
@@ -228,11 +247,19 @@ class OpenAICompatibleClient(LLMClient):
             "length": "max_tokens",
         }.get(finish, "end_turn")
 
+        input_tokens = response.usage.prompt_tokens
+        output_tokens = response.usage.completion_tokens
+
+        cost_usd = cost(
+            self._rate, self._model, in_token=input_tokens, out_token=output_tokens
+        )
+
         return NormalizedResponse(
             blocks=blocks,
-            input_tokens=response.usage.prompt_tokens,
-            output_tokens=response.usage.completion_tokens,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             stop_reason=stop_reason,
+            cost_usd=cost_usd,
         )
 
 
@@ -247,9 +274,9 @@ _URLS = {
 }
 
 
-def make_client(provider, model, api_key="", base_url=None) -> LLMClient:
+def make_client(provider, model, api_key="", base_url=None, rates=None) -> LLMClient:
     if provider == "anthropic":
-        return AnthropicClient(model=model, api_key=api_key)
+        return AnthropicClient(model=model, api_key=api_key, rates=rates)
     return OpenAICompatibleClient(
-        model=model, api_key=api_key, base_url=base_url or _URLS[provider]
+        model=model, api_key=api_key, base_url=base_url or _URLS[provider], rates=rates
     )

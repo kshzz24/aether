@@ -8,6 +8,7 @@ directly (the renderer owns stdout).
 import argparse
 import asyncio
 import os
+import tomllib
 
 from agent import Agent
 from cli.renderer import Renderer
@@ -15,12 +16,7 @@ from client import make_client
 from tools import build_tools
 
 # Per-token (USD) pricing as (input_rate, output_rate). $/token = $/Mtok / 1e6.
-PRICING: dict[str, tuple[float, float]] = {
-    "claude-opus-4-8": (5e-6, 25e-6),
-    "claude-opus-4-7": (5e-6, 25e-6),
-    "claude-sonnet-4-6": (3e-6, 15e-6),
-    "claude-haiku-4-5": (1e-6, 5e-6),
-}
+
 
 # Environment variable holding the API key, per provider.
 ENV_KEYS: dict[str, str] = {
@@ -41,8 +37,13 @@ SYSTEM = (
 
 
 async def _run(args: argparse.Namespace) -> None:
+    with open("prices.toml", "rb") as f:
+        prices = tomllib.load(f)
     api_key = os.environ.get(ENV_KEYS.get(args.provider, ""), "")
-    client = make_client(provider=args.provider, model=args.model, api_key=api_key)
+    rates = prices.get(args.provider, {})
+    client = make_client(
+        provider=args.provider, model=args.model, api_key=api_key, rates=rates
+    )
 
     agent = Agent(
         client=client,
@@ -51,7 +52,6 @@ async def _run(args: argparse.Namespace) -> None:
         system=SYSTEM,
         max_iterations=args.max_iter,
         max_cost_usd=args.max_cost,
-        pricing={args.model: PRICING.get(args.model, (0.0, 0.0))},
     )
 
     renderer = Renderer()

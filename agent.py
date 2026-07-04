@@ -34,7 +34,6 @@ class Agent:
         system: str,
         max_iterations: int,
         max_cost_usd: float,
-        pricing: dict[str, tuple[float, float]],
     ) -> None:
         self.client = client
         self.model = model
@@ -42,11 +41,6 @@ class Agent:
         self.system = system
         self.max_iterations = max_iterations
         self.max_cost_usd = max_cost_usd
-        self.pricing = pricing
-
-    def _price(self, input_tokens: int, output_tokens: int) -> float:
-        in_rate, out_rate = self.pricing[self.model]
-        return input_tokens * in_rate + out_rate * output_tokens
 
     async def run(self, goal: str) -> AsyncIterator[Event]:
 
@@ -69,7 +63,7 @@ class Agent:
                 return
 
             # this turn's cost.
-            current_cost = self._price(response.input_tokens, response.output_tokens)
+            current_cost = response.cost_usd
             total_cost += current_cost
             yield CostEvent(
                 type="cost", cost_usd=current_cost, total_cost_usd=total_cost
