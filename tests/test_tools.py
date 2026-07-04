@@ -50,6 +50,50 @@ def test_run_shell_nonzero_exit_is_data_not_error():
     assert "exit_code: 3" in result  # returned as data, NOT raised
 
 
+def test_run_shell_accepts_numeric_string_timeout():
+    from tools import run_shell
+
+    # Models routinely emit numbers as strings; a well-formed one must not
+    # blow up in asyncio — it should be coerced and the command should run.
+    result = drive(run_shell.run({"command": "echo hi", "timeout": "5"}))
+    assert "hi" in result
+    assert "exit_code: 0" in result
+
+
+def test_run_shell_rejects_non_numeric_timeout():
+    from tools import run_shell
+
+    # Junk timeout is a malformed arg -> clear ValueError (agent turns it into
+    # an observation), NOT a cryptic TypeError from deep inside asyncio.
+    with pytest.raises(ValueError):
+        drive(run_shell.run({"command": "echo hi", "timeout": "soon"}))
+
+
+def test_run_shell_rejects_non_positive_timeout():
+    from tools import run_shell
+
+    with pytest.raises(ValueError):
+        drive(run_shell.run({"command": "echo hi", "timeout": 0}))
+
+
+def test_run_shell_timeout_raises_without_hanging():
+    import sys
+    import time
+
+    from tools import run_shell
+
+    # A command that outlives its timeout must be killed and surface a clean
+    # TimeoutError fast, not hang the agent. Python is portable across shells.
+    cmd = f'"{sys.executable}" -c "import time; time.sleep(30)"'
+    start = time.monotonic()
+    with pytest.raises(TimeoutError):
+        drive(run_shell.run({"command": cmd, "timeout": 1}))
+    elapsed = time.monotonic() - start
+    # The agent must not block for the command's full lifetime. Killing only
+    # the shell leaves the child holding the pipes and wait() blocks ~30s.
+    assert elapsed < 10, f"run_shell hung for {elapsed:.1f}s after timeout"
+
+
 def test_edit_file_unique_replace_changes_file_and_returns_diff(tmp_path):
     from tools import edit_file
 
