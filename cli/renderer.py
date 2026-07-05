@@ -4,10 +4,14 @@ The agent core and tools yield `Event` objects; this is where they become text.
 Keep all `print()` calls in this file (Phase 0 print-discipline invariant).
 """
 
+from typing import assert_never
+
 from events import (
+    ConfirmRequestEvent,
     CostEvent,
     Event,
     StatusEvent,
+    TerminalEvent,
     TextEvent,
     ToolCallEvent,
     ToolResultEvent,
@@ -40,16 +44,23 @@ class Renderer:
     """Turns the agent's Event stream into terminal output."""
 
     def render(self, event: Event) -> None:
-        if isinstance(event, StatusEvent):
-            print(f"\n[ {event.message} ]")
-        elif isinstance(event, TextEvent):
-            print(event.text)
-        elif isinstance(event, ToolCallEvent):
-            print(f"  -> {event.name}({_format_args(event.arguments)})")
-        elif isinstance(event, ToolResultEvent):
-            print(_indent(_truncate(event.result)))
-        elif isinstance(event, CostEvent):
-            print(
-                f"  [${event.cost_usd:.4f} this turn"
-                f" | ${event.total_cost_usd:.4f} total]"
-            )
+        match event:
+            case StatusEvent(message=message):
+                print(f"\n[ {message} ]")
+            case TextEvent(text=text):
+                print(text)
+            case ToolCallEvent(name=name, arguments=arguments):
+                print(f"  -> {name}({_format_args(arguments)})")
+            case ToolResultEvent(result=result):
+                print(_indent(_truncate(result)))
+            case CostEvent(cost_usd=cost_usd, total_cost_usd=total):
+                print(f"  [${cost_usd:.4f} this turn | ${total:.4f} total]")
+            case ConfirmRequestEvent(
+                tool_name=name, arguments=arguments, reason=reason
+            ):
+                print(f"\n[ confirm? {name}({_format_args(arguments)}) — {reason} ]")
+            case TerminalEvent(reason=reason, detail=detail):
+                label = reason.name.lower().replace("_", " ")
+                print(f"\n[ {label}{f': {detail}' if detail else ''} ]")
+            case _ as unreachable:
+                assert_never(unreachable)

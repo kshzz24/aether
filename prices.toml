@@ -2,5 +2,22 @@
 "openai/gpt-oss-120b"     = { input = 0.15, output = 0.75 }
 "llama-3.3-70b-versatile" = { input = 0.59, output = 0.79 }
 
+[openrouter]
+# OpenRouter routes each request to one of several backend providers, each with
+# its own price, so real cost varies by routing. These are representative $/Mtok
+# for the common route (observed range across providers: prompt 0.03-0.35,
+# completion 0.14-0.95). Tighten against https://openrouter.ai/openai/gpt-oss-120b
+# if you need exact metering.
+"openai/gpt-oss-120b" = { input = 0.15, output = 0.60 }
+
+# Free tiers ($0/$0 -> cost() returns 0 with no warning). OpenRouter's free
+# lineup and IDs rotate often and are rate-limited; these are current, real, and
+# tool-capable as of 2026-07-05. Verify at https://openrouter.ai/models?max_price=0
+# before relying on any of them, and prefer gpt-oss/llama for tool-call reliability.
+"openai/gpt-oss-120b:free"            = { input = 0, output = 0 }
+"openai/gpt-oss-20b:free"             = { input = 0, output = 0 }
+"meta-llama/llama-3.3-70b-instruct:free" = { input = 0, output = 0 }
+"qwen/qwen3-coder:free"               = { input = 0, output = 0 }
+
 [anthropic]
 "claude-opus-4-8" = { input = 5, output = 25 }

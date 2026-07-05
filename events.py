@@ -1,5 +1,27 @@
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from enum import Enum, auto
+from typing import Any, Literal, TypeAlias
+
+
+class TerminalReason(Enum):
+    COMPLETED = auto()
+    MAX_ITERATIONS = auto()
+    MAX_COST = auto()
+    LOOP_DETECTED = auto()
+    ERROR = auto()
+
+
+@dataclass(frozen=True)
+class TerminalEvent:
+    reason: TerminalReason
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class ConfirmRequestEvent:
+    tool_name: str
+    arguments: dict[str, Any]
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -35,4 +57,12 @@ class CostEvent:
     total_cost_usd: float
 
 
-Event: TypeAlias = StatusEvent | TextEvent | ToolCallEvent | ToolResultEvent | CostEvent
+Event: TypeAlias = (
+    StatusEvent
+    | TextEvent
+    | ToolCallEvent
+    | ToolResultEvent
+    | CostEvent
+    | TerminalEvent
+    | ConfirmRequestEvent
+)
