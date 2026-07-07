@@ -1,5 +1,7 @@
+from tools.base import ToolKind
 from tools.fs import atomic_write
 
+KIND = ToolKind.WRITE
 SCHEMA = {
     "name": "write_file",
     "description": "Write content to a file, creating parent directories. Overwrites.",

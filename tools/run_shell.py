@@ -2,6 +2,9 @@ import asyncio
 import subprocess
 import sys
 
+from tools.base import ToolKind
+
+KIND = ToolKind.EXECUTE
 SCHEMA = {
     "name": "run_shell",
     "description": "Run a shell command and return its exit code, stdout, and stderr.",

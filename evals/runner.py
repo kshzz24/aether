@@ -94,9 +94,10 @@ def main() -> None:
     import tomllib
 
     from client import make_client
+    from config import ForgeConfig
     from evals.tasks import GOLDEN_TASKS
     from main import ENV_KEYS, SYSTEM
-    from tools import build_tools
+    from tools import build_registry
 
     parser = argparse.ArgumentParser(
         prog="forge-eval", description="Run FORGE's golden-task smoke suite."
@@ -112,6 +113,13 @@ def main() -> None:
     api_key = os.environ.get(ENV_KEYS.get(args.provider, ""), "")
     rates = prices.get(args.provider, {})
 
+    config = ForgeConfig(
+        provider=args.provider,
+        model=args.model,
+        max_iterations=args.max_iter,
+        max_cost_usd=args.max_cost,
+    )
+
     def make_agent(task: GoldenTask) -> Agent:
         client = make_client(
             provider=args.provider, model=args.model, api_key=api_key, rates=rates
@@ -119,7 +127,7 @@ def main() -> None:
         return Agent(
             client=client,
             model=args.model,
-            tools=build_tools(),
+            registry=build_registry(config),
             system=SYSTEM,
             max_iterations=args.max_iter,
             max_cost_usd=args.max_cost,

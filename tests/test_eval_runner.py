@@ -25,7 +25,10 @@ import asyncio
 
 from agent import Agent
 from client import NormalizedResponse, TextBlock, ToolCallBlock
-from tools import build_tools
+from config import ForgeConfig
+from tools import build_registry
+from tools.base import Tool, ToolKind
+from tools.registry import ToolRegistry
 
 
 class ScriptedClient:
@@ -54,7 +57,7 @@ def _finish(text="done"):
 
 def _agent(client, max_iterations=5):
     return Agent(
-        client=client, model="m", tools=build_tools(),
+        client=client, model="m", registry=build_registry(ForgeConfig()),
         system="s", max_iterations=max_iterations, max_cost_usd=10.0,
     )
 
@@ -119,7 +122,6 @@ def test_run_task_fails_when_run_aborts_even_if_artifact_exists(tmp_path):
 
 
 def test_run_task_seeds_workspace_before_running_agent(tmp_path):
-    from agent import Agent, Tool
     from evals.runner import GoldenTask, run_task
 
     # A read task with nothing to read can never pass, so setup must populate
@@ -134,13 +136,15 @@ def test_run_task_seeds_workspace_before_running_agent(tmp_path):
         return "ok"
 
     tool = Tool(
-        schema={"name": "t", "description": "t",
-                "parameters": {"type": "object", "properties": {}}},
-        run=spy_tool,
+        name="t", description="t",
+        parameters={"type": "object", "properties": {}},
+        kind=ToolKind.READ, run=spy_tool,
     )
+    registry = ToolRegistry()
+    registry.register(tool)
     agent = Agent(
         client=ScriptedClient([_tool_use("t", {}), _finish()]),
-        model="m", tools={"t": tool}, system="s",
+        model="m", registry=registry, system="s",
         max_iterations=5, max_cost_usd=10.0,
     )
     task = GoldenTask(name="order", goal="g", check=lambda ws: True, setup=setup)

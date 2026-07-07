@@ -1,8 +1,10 @@
 import difflib
 from pathlib import Path
 
+from tools.base import ToolKind
 from tools.fs import atomic_write
 
+KIND = ToolKind.WRITE
 SCHEMA = {
     "name": "edit_file",
     "description": "Replace an exact, unique string in a file. Returns a unified diff.",

@@ -1,5 +1,9 @@
 from pathlib import Path
 
+from tools.base import ToolKind
+
+KIND = ToolKind.READ
+
 SCHEMA = {
     "name": "read_file",
     "description": "Read a UTF-8 text file and return its full contents.",

@@ -13,7 +13,9 @@ import tomllib
 from agent import Agent
 from cli.renderer import Renderer
 from client import make_client
-from tools import build_tools
+from config import load_config
+from tools import build_registry
+from tools.hooks import Hooks
 
 # Per-token (USD) pricing as (input_rate, output_rate). $/token = $/Mtok / 1e6.
 
@@ -36,26 +38,37 @@ SYSTEM = (
 )
 
 
-async def _run(args: argparse.Namespace) -> None:
+async def _run(goal: str, args: argparse.Namespace) -> None:
+    # Only flags the user *explicitly* set reach the config merge; unset flags
+    # are None sentinels and must not clobber file/default config.
+    cli_overrides = {
+        k: v
+        for k, v in vars(args).items()
+        if k != "goal" and v is not None
+    }
+    config = load_config(cli_overrides)
+
     with open("prices.toml", "rb") as f:
         prices = tomllib.load(f)
-    api_key = os.environ.get(ENV_KEYS.get(args.provider, ""), "")
-    rates = prices.get(args.provider, {})
+    api_key = os.environ.get(ENV_KEYS.get(config.provider, ""), "")
+    rates = prices.get(config.provider, {})
     client = make_client(
-        provider=args.provider, model=args.model, api_key=api_key, rates=rates
+        provider=config.provider, model=config.model, api_key=api_key, rates=rates
     )
 
     agent = Agent(
         client=client,
-        model=args.model,
-        tools=build_tools(),
+        model=config.model,
+        registry=build_registry(config),
         system=SYSTEM,
-        max_iterations=args.max_iter,
-        max_cost_usd=args.max_cost,
+        max_iterations=config.max_iterations,
+        max_cost_usd=config.max_cost_usd,
+        auto_approve=config.auto_approve,
+        hooks=Hooks(),
     )
 
     renderer = Renderer()
-    async for event in agent.run(args.goal):
+    async for event in agent.run(goal):
         renderer.render(event)
 
 
@@ -64,24 +77,25 @@ def main() -> None:
         prog="forge", description="FORGE - an agentic CLI coding assistant"
     )
     parser.add_argument("goal", help="the task for the agent to accomplish")
-    parser.add_argument("--provider", default="anthropic", help="LLM provider")
-    parser.add_argument("--model", default="claude-opus-4-8", help="model id")
+    # default=None so unset flags fall through to file/default config layers.
+    parser.add_argument("--provider", default=None, help="LLM provider")
+    parser.add_argument("--model", default=None, help="model id")
     parser.add_argument(
         "--max-iter",
-        dest="max_iter",
+        dest="max_iterations",
         type=int,
-        default=25,
+        default=None,
         help="maximum agent loop iterations",
     )
     parser.add_argument(
         "--max-cost",
-        dest="max_cost",
+        dest="max_cost_usd",
         type=float,
-        default=1.0,
+        default=None,
         help="maximum spend in USD before the run aborts",
     )
     args = parser.parse_args()
-    asyncio.run(_run(args))
+    asyncio.run(_run(args.goal, args))
 
 
 if __name__ == "__main__":

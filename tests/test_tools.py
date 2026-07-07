@@ -130,11 +130,20 @@ def test_edit_file_non_unique_raises(tmp_path):
         ))
 
 
-def test_build_tools_returns_four_named_tools():
-    from agent import Tool
-    from tools import build_tools
+def test_build_registry_returns_four_named_builtins():
+    from config import ForgeConfig
+    from tools import build_registry
+    from tools.base import Tool, ToolKind
 
-    tools = build_tools()
-    assert set(tools) == {"read_file", "write_file", "run_shell", "edit_file"}
-    assert all(isinstance(t, Tool) for t in tools.values())
-    assert all(key == tool.schema["name"] for key, tool in tools.items())
+    registry = build_registry(ForgeConfig())
+    tools = registry.list()
+    assert {t.name for t in tools} == {
+        "read_file", "write_file", "run_shell", "edit_file"
+    }
+    assert all(isinstance(t, Tool) for t in tools)
+    # run_shell is the only EXECUTE (dangerous) builtin.
+    kinds = {t.name: t.kind for t in tools}
+    assert kinds["run_shell"] is ToolKind.EXECUTE
+    assert kinds["read_file"] is ToolKind.READ
+    assert kinds["write_file"] is ToolKind.WRITE
+    assert kinds["edit_file"] is ToolKind.WRITE

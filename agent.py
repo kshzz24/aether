@@ -1,5 +1,4 @@
-from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
+from collections.abc import AsyncIterator
 
 from client import (
     LLMClient,
@@ -22,16 +21,11 @@ from events import (
     ToolCallEvent,
     ToolResultEvent,
 )
+from tools.base import ToolKind
+from tools.hooks import Hooks
+from tools.registry import ToolRegistry
 
 CONTEXT_WINDOW_SIZE = 128000
-
-DANGEROUS_TOOLS = {"run_shell"}
-
-
-@dataclass
-class Tool:
-    schema: dict
-    run: Callable[[dict], Awaitable[str]]
 
 
 class Agent:
@@ -39,36 +33,44 @@ class Agent:
         self,
         client: LLMClient,
         model: str,
-        tools: dict[str, Tool],
+        registry: ToolRegistry,
         system: str,
         max_iterations: int,
         max_cost_usd: float,
         auto_approve: bool = True,
+        hooks: Hooks | None = None,
     ) -> None:
         self.client = client
         self.model = model
-        self.tools = tools
+        self.registry = registry
         self.system = system
         self.max_iterations = max_iterations
         self.max_cost_usd = max_cost_usd
         self.max_context_token = CONTEXT_WINDOW_SIZE
         self._auto_approve = auto_approve
+        self.hooks = hooks or Hooks()
 
     def _resolve_confirmation(self, tool_name: str, arguments: dict) -> bool:
-
+        # TODO(phase-5): the Approver replaces this stub with real policy modes.
         return self._auto_approve
 
     async def run(self, goal: str) -> AsyncIterator[Event]:
+        self.hooks.before_run(goal)
+        try:
+            async for event in self._run(goal):
+                yield event
+        finally:
+            self.hooks.after_run(goal)
 
+    async def _run(self, goal: str) -> AsyncIterator[Event]:
         initial_text = TextBlock(text=goal)
         messages = [Message(role="user", blocks=[initial_text])]
-        tools_schemas = [t.schema for t in self.tools.values()]
+        tools_schemas = self.registry.wire_schemas()
 
         total_cost = 0.0
         detector = LoopDetector()
 
         for _ in range(self.max_iterations):
-
             yield StatusEvent(type="status", message="thinking")
 
             try:
@@ -109,33 +111,44 @@ class Agent:
 
             for block in response.blocks:
                 if isinstance(block, ToolCallBlock):
-
                     yield ToolCallEvent(
                         type="tool_call",
                         name=block.name,
                         arguments=block.arguments,
                     )
 
-                    is_dangerous = block.name in DANGEROUS_TOOLS
-                    if is_dangerous:
-                        yield ConfirmRequestEvent(
-                            tool_name=block.name,
-                            arguments=block.arguments,
-                            reason="dangerous tool",
-                        )
+                    self.hooks.before_tool(block.name, block.arguments)
 
-                    if is_dangerous and not self._resolve_confirmation(
-                        block.name, block.arguments
-                    ):
-                        result_str = "DENIED: user declined to run this tool"
-
+                    # Validate the call against the registered schema (and the
+                    # allowlist) BEFORE dispatch. An invalid or disallowed call
+                    # is data, not a crash: return the error as an observation.
+                    try:
+                        self.registry.validate_call(block.name, block.arguments)
+                        tool = self.registry.get(block.name)
+                    except Exception as e:
+                        result_str = f"ERROR: {e}"
+                        self.hooks.on_error(e)
                     else:
-                        try:
-                            current_tool_needed = self.tools[block.name]
-                            result_str = await current_tool_needed.run(block.arguments)
-                        except Exception as e:
-                            result_str = f"ERROR: {e}  "
+                        is_dangerous = tool.kind is ToolKind.EXECUTE
+                        if is_dangerous:
+                            yield ConfirmRequestEvent(
+                                tool_name=block.name,
+                                arguments=block.arguments,
+                                reason="dangerous tool",
+                            )
 
+                        if is_dangerous and not self._resolve_confirmation(
+                            block.name, block.arguments
+                        ):
+                            result_str = "DENIED: user declined to run this tool"
+                        else:
+                            try:
+                                result_str = await tool.run(block.arguments)
+                            except Exception as e:
+                                result_str = f"ERROR: {e}  "
+                                self.hooks.on_error(e)
+
+                    self.hooks.after_tool(block.name, block.arguments, result_str)
                     detector.record(block.name, block.arguments, result_str)
 
                     tool_results.append(

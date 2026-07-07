@@ -1,6 +1,6 @@
 import asyncio
 
-from agent import Agent, Tool
+from agent import Agent
 from client import (
     NormalizedResponse,
     TextBlock,
@@ -17,6 +17,9 @@ from events import (
     ToolCallEvent,
     ToolResultEvent,
 )
+from tools.base import Tool, ToolKind
+from tools.hooks import Hooks
+from tools.registry import ToolRegistry
 
 
 class StubClient:
@@ -40,15 +43,21 @@ def collect(agent: Agent, goal: str) -> list:
     return asyncio.run(_drive())
 
 
-def make_tool(name: str, fn) -> Tool:
+def make_tool(name: str, fn, kind: ToolKind = ToolKind.READ) -> Tool:
     return Tool(
-        schema={
-            "name": name,
-            "description": name,
-            "parameters": {"type": "object", "properties": {}},
-        },
+        name=name,
+        description=name,
+        parameters={"type": "object", "properties": {}},
+        kind=kind,
         run=fn,
     )
+
+
+def make_registry(*tools: Tool) -> ToolRegistry:
+    registry = ToolRegistry()
+    for tool in tools:
+        registry.register(tool)
+    return registry
 
 
 def test_happy_path_runs_tool_then_finishes():
@@ -68,7 +77,7 @@ def test_happy_path_runs_tool_then_finishes():
     client = StubClient(responses)
     agent = Agent(
         client=client, model="m",
-        tools={"echo": make_tool("echo", echo)},
+        registry=make_registry(make_tool("echo", echo)),
         system="sys", max_iterations=5, max_cost_usd=1.0,
     )
 
@@ -99,7 +108,7 @@ def test_iteration_cap_stops_cleanly():
     client = StubClient([forever])
     agent = Agent(
         client=client, model="m",
-        tools={"echo": make_tool("echo", echo)},
+        registry=make_registry(make_tool("echo", echo)),
         system="s", max_iterations=1, max_cost_usd=99.0,
     )
 
@@ -120,7 +129,7 @@ def test_cost_cap_stops_cleanly():
     client = StubClient([resp])
     agent = Agent(
         client=client, model="m",
-        tools={"echo": make_tool("echo", echo)},
+        registry=make_registry(make_tool("echo", echo)),
         system="s", max_iterations=10, max_cost_usd=1.0,
     )
 
@@ -154,7 +163,7 @@ def test_repeating_action_trips_loop_detector():
     client = RepeatingClient(resp)
     agent = Agent(
         client=client, model="m",
-        tools={"echo": make_tool("echo", echo)},
+        registry=make_registry(make_tool("echo", echo)),
         system="s", max_iterations=50, max_cost_usd=99.0,
     )
 
@@ -174,7 +183,7 @@ def test_unsupported_tool_calling_stops_gracefully():
 
     agent = Agent(
         client=RaisingClient(), model="m",
-        tools={}, system="s", max_iterations=5, max_cost_usd=10.0,
+        registry=ToolRegistry(), system="s", max_iterations=5, max_cost_usd=10.0,
     )
 
     events = collect(agent, "go")
@@ -203,7 +212,7 @@ def test_tool_failure_becomes_observation():
     client = StubClient(responses)
     agent = Agent(
         client=client, model="m",
-        tools={"boom": make_tool("boom", boom)},
+        registry=make_registry(make_tool("boom", boom)),
         system="s", max_iterations=5, max_cost_usd=10.0,
     )
 
@@ -233,7 +242,7 @@ def _run_shell_then_finish() -> list[NormalizedResponse]:
 
 
 def test_dangerous_tool_surfaces_confirm_and_runs_when_auto_approved():
-    # run_shell is in DANGEROUS_TOOLS, so the request is always surfaced. With
+    # An EXECUTE-kind tool is dangerous, so the request is always surfaced. With
     # auto_approve=True the stubbed resolver says yes and the tool runs.
     ran = {"count": 0}
 
@@ -244,7 +253,7 @@ def test_dangerous_tool_surfaces_confirm_and_runs_when_auto_approved():
     client = StubClient(_run_shell_then_finish())
     agent = Agent(
         client=client, model="m",
-        tools={"run_shell": make_tool("run_shell", shell)},
+        registry=make_registry(make_tool("run_shell", shell, kind=ToolKind.EXECUTE)),
         system="s", max_iterations=5, max_cost_usd=10.0, auto_approve=True,
     )
 
@@ -274,7 +283,7 @@ def test_dangerous_tool_surfaces_confirm_and_is_denied_when_not_auto_approved():
     client = StubClient(_run_shell_then_finish())
     agent = Agent(
         client=client, model="m",
-        tools={"run_shell": make_tool("run_shell", shell)},
+        registry=make_registry(make_tool("run_shell", shell, kind=ToolKind.EXECUTE)),
         system="s", max_iterations=5, max_cost_usd=10.0, auto_approve=False,
     )
 
@@ -291,8 +300,8 @@ def test_dangerous_tool_surfaces_confirm_and_is_denied_when_not_auto_approved():
 
 
 def test_safe_tool_bypasses_confirmation_even_when_not_auto_approved():
-    # read_file is NOT dangerous: no confirmation seam, runs regardless of the
-    # auto_approve flag. Proves the gate is scoped to DANGEROUS_TOOLS only.
+    # A READ-kind tool is NOT dangerous: no confirmation seam, runs regardless of
+    # the auto_approve flag. Proves the gate is scoped to EXECUTE tools only.
     async def read_file(args):
         return "file body"
 
@@ -309,7 +318,7 @@ def test_safe_tool_bypasses_confirmation_even_when_not_auto_approved():
     client = StubClient(responses)
     agent = Agent(
         client=client, model="m",
-        tools={"read_file": make_tool("read_file", read_file)},
+        registry=make_registry(make_tool("read_file", read_file, kind=ToolKind.READ)),
         system="s", max_iterations=5, max_cost_usd=10.0, auto_approve=False,
     )
 
@@ -318,3 +327,67 @@ def test_safe_tool_bypasses_confirmation_even_when_not_auto_approved():
     assert not any(isinstance(e, ConfirmRequestEvent) for e in events)
     results = [e for e in events if isinstance(e, ToolResultEvent)]
     assert results and results[0].result == "file body"
+
+
+def test_hooks_fire_at_their_points_during_a_run():
+    async def echo(args):
+        return "ok"
+
+    fired = []
+    hooks = Hooks(
+        before_run=lambda goal: fired.append(("before_run", goal)),
+        after_run=lambda goal: fired.append(("after_run", goal)),
+        before_tool=lambda name, args: fired.append(("before_tool", name)),
+        after_tool=lambda name, args, result: fired.append(("after_tool", name)),
+    )
+    responses = [
+        NormalizedResponse(
+            blocks=[ToolCallBlock(id="c1", name="echo", arguments={})],
+            input_tokens=1, output_tokens=1, cost_usd=0.0, stop_reason="tool_use",
+        ),
+        NormalizedResponse(
+            blocks=[TextBlock(text="done")],
+            input_tokens=1, output_tokens=1, cost_usd=0.0, stop_reason="end_turn",
+        ),
+    ]
+    agent = Agent(
+        client=StubClient(responses), model="m",
+        registry=make_registry(make_tool("echo", echo)),
+        system="s", max_iterations=5, max_cost_usd=10.0, hooks=hooks,
+    )
+
+    collect(agent, "the goal")
+
+    names = [f[0] for f in fired]
+    # run brackets everything; the tool bracket sits inside it, in order.
+    assert names == ["before_run", "before_tool", "after_tool", "after_run"]
+    assert fired[0] == ("before_run", "the goal")
+    assert fired[-1] == ("after_run", "the goal")
+
+
+def test_on_error_hook_fires_on_tool_failure():
+    async def boom(args):
+        raise ValueError("kaboom")
+
+    errors = []
+    hooks = Hooks(on_error=lambda exc: errors.append(exc))
+    responses = [
+        NormalizedResponse(
+            blocks=[ToolCallBlock(id="c1", name="boom", arguments={})],
+            input_tokens=1, output_tokens=1, cost_usd=0.0, stop_reason="tool_use",
+        ),
+        NormalizedResponse(
+            blocks=[TextBlock(text="recovered")],
+            input_tokens=1, output_tokens=1, cost_usd=0.0, stop_reason="end_turn",
+        ),
+    ]
+    agent = Agent(
+        client=StubClient(responses), model="m",
+        registry=make_registry(make_tool("boom", boom)),
+        system="s", max_iterations=5, max_cost_usd=10.0, hooks=hooks,
+    )
+
+    collect(agent, "go")
+
+    assert errors and isinstance(errors[0], ValueError)
+    assert "kaboom" in str(errors[0])
