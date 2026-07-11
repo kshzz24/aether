@@ -14,6 +14,7 @@ from agent import Agent
 from cli.renderer import Renderer
 from client import make_client
 from config import load_config
+from gateway.client import GatewayClient
 from tools import build_registry
 from tools.hooks import Hooks
 
@@ -39,12 +40,17 @@ SYSTEM = (
 
 
 async def _run(goal: str, args: argparse.Namespace) -> None:
+    # gateway_url is a composition-root concern, not validated config: ForgeConfig
+    # uses extra="forbid", so pull it out before the merge. (For .forge/config.toml
+    # support, add a gateway_url field to ForgeConfig; left CLI-only here by scope.)
+    gateway_url = args.gateway_url
+
     # Only flags the user *explicitly* set reach the config merge; unset flags
     # are None sentinels and must not clobber file/default config.
     cli_overrides = {
         k: v
         for k, v in vars(args).items()
-        if k != "goal" and v is not None
+        if k not in ("goal", "gateway_url") and v is not None
     }
     config = load_config(cli_overrides)
 
@@ -52,9 +58,19 @@ async def _run(goal: str, args: argparse.Namespace) -> None:
         prices = tomllib.load(f)
     api_key = os.environ.get(ENV_KEYS.get(config.provider, ""), "")
     rates = prices.get(config.provider, {})
+
+    # The direct provider client. With a gateway configured it becomes the
+    # degrade-to-passthrough fallback; otherwise the agent talks to it directly.
     client = make_client(
         provider=config.provider, model=config.model, api_key=api_key, rates=rates
     )
+    if gateway_url:
+        client = GatewayClient(
+            gateway_url=gateway_url,
+            model=config.model,
+            fallback=client,
+            rates=rates,
+        )
 
     agent = Agent(
         client=client,
@@ -93,6 +109,16 @@ def main() -> None:
         type=float,
         default=None,
         help="maximum spend in USD before the run aborts",
+    )
+    parser.add_argument(
+        "--gateway-url",
+        dest="gateway_url",
+        default=None,
+        help=(
+            "base URL of the FORGE gateway (e.g. http://localhost:8000/v1); "
+            "when set, requests route through it and fall back to a direct "
+            "provider call if it is unreachable"
+        ),
     )
     args = parser.parse_args()
     asyncio.run(_run(args.goal, args))
