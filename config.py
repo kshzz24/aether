@@ -64,4 +64,5 @@ def load_config(
     merged.update(_read_toml(system_path))
     merged.update(_read_toml(project_path))
     merged.update(cli_overrides or {})
+    merged.pop("gateway", None)
     return ForgeConfig(**merged)
