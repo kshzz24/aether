@@ -25,6 +25,7 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "ruff>=0.6.0",
     "fakeredis>=2.20.0",
+    "lupa>=2.0",            # lets fakeredis execute Lua (EVAL) in tests
 ]
 
 [project.scripts]
