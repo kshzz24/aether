@@ -1,6 +1,8 @@
-from client import LLMClient, OpenAICompatibleClient
 import logging
+
 from openai import APIConnectionError
+
+from client import LLMClient, OpenAICompatibleClient
 
 
 class GatewayClient(LLMClient):
