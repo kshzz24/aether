@@ -17,6 +17,7 @@ dependencies = [
     "asyncpg>=0.29.0",
     "redis>=5.0.0",
     "numpy>=1.26.0",
+    "pathspec>=0.12",
 ]
 
 [project.optional-dependencies]

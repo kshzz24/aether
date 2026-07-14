@@ -1,10 +1,10 @@
 from config import ForgeConfig
-from tools import edit_file, read_file, run_shell, write_file
+from tools import edit_file, read_file, run_shell, write_file, grep, glob, list_dir
 from tools.base import Tool
 from tools.loader import load_user_tools
 from tools.registry import ToolRegistry
 
-_BUILTIN_MODULES = [read_file, write_file, run_shell, edit_file]
+_BUILTIN_MODULES = [read_file, write_file, run_shell, edit_file, grep, glob, list_dir]
 
 
 def build_registry(config: ForgeConfig) -> ToolRegistry:
