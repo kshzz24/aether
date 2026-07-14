@@ -22,6 +22,11 @@ DSN = os.environ.get(
 
 @pytest_asyncio.fixture
 async def clean_pool():
+    # Defense in depth (conftest already redirects to a *_test DB): never TRUNCATE
+    # a non-test database, even if this module is run with a stray prod DSN.
+    assert DSN.rsplit("/", 1)[-1].endswith("_test"), (
+        f"refusing to TRUNCATE non-test database: {DSN}"
+    )
     p = await ledger.init_pool(DSN)
     await p.execute("TRUNCATE ledger")   # whole-table aggregation needs a known state
     yield p
