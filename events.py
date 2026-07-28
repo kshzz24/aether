@@ -2,6 +2,9 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any, Literal, TypeAlias
 
+from approval import Verdict
+from tools.base import ToolKind
+
 
 class TerminalReason(Enum):
     COMPLETED = auto()
@@ -57,6 +60,17 @@ class CostEvent:
     total_cost_usd: float
 
 
+@dataclass(frozen=True)
+class ApprovalDecisionEvent:
+    type: Literal["approval_decision"]
+    tool_name: str
+    kind: ToolKind
+    danger_reasons: list[str]
+    verdict: Verdict
+    approved: bool
+    source: Literal["policy", "human"]
+
+
 Event: TypeAlias = (
     StatusEvent
     | TextEvent
@@ -65,4 +79,5 @@ Event: TypeAlias = (
     | CostEvent
     | TerminalEvent
     | ConfirmRequestEvent
+    | ApprovalDecisionEvent
 )

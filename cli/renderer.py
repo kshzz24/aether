@@ -7,6 +7,7 @@ Keep all `print()` calls in this file (Phase 0 print-discipline invariant).
 from typing import assert_never
 
 from events import (
+    ApprovalDecisionEvent,
     ConfirmRequestEvent,
     CostEvent,
     Event,
@@ -47,20 +48,33 @@ class Renderer:
         match event:
             case StatusEvent(message=message):
                 print(f"\n[ {message} ]")
+
             case TextEvent(text=text):
                 print(text)
+
             case ToolCallEvent(name=name, arguments=arguments):
                 print(f"  -> {name}({_format_args(arguments)})")
+
             case ToolResultEvent(result=result):
                 print(_indent(_truncate(result)))
+
             case CostEvent(cost_usd=cost_usd, total_cost_usd=total):
                 print(f"  [${cost_usd:.4f} this turn | ${total:.4f} total]")
+
+            case ApprovalDecisionEvent(
+                tool_name=name, verdict=verdict, source=source, danger_reasons=reasons
+            ):
+                suffix = f" — {'; '.join(reasons)}" if reasons else ""
+                print(f"[ decision {name}: {verdict.name} ({source}){suffix} ]")
+
             case ConfirmRequestEvent(
                 tool_name=name, arguments=arguments, reason=reason
             ):
                 print(f"\n[ confirm? {name}({_format_args(arguments)}) — {reason} ]")
+
             case TerminalEvent(reason=reason, detail=detail):
                 label = reason.name.lower().replace("_", " ")
                 print(f"\n[ {label}{f': {detail}' if detail else ''} ]")
+
             case _ as unreachable:
                 assert_never(unreachable)
