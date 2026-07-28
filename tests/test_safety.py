@@ -1,4 +1,3 @@
-from pathlib import Path
 
 from safety import dangerous_command, path_escape
 

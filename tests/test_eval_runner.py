@@ -55,10 +55,11 @@ def _finish(text="done"):
     )
 
 
-def _agent(client, max_iterations=5):
+def _agent(client, max_iterations=5, repo_root=None):
     return Agent(
         client=client, model="m", registry=build_registry(ForgeConfig()),
         system="s", max_iterations=max_iterations, max_cost_usd=10.0,
+        repo_root=repo_root,
     )
 
 
@@ -77,7 +78,7 @@ def test_run_task_passes_when_completed_and_check_true(tmp_path):
         and "TODO" in (ws / "out.txt").read_text(encoding="utf-8"),
     )
 
-    result = asyncio.run(run_task(_agent(client), task, tmp_path))
+    result = asyncio.run(run_task(_agent(client, repo_root=tmp_path), task, tmp_path))
 
     assert result.name == "write-out"
     assert result.passed is True
@@ -107,7 +108,7 @@ def test_run_task_fails_when_run_aborts_even_if_artifact_exists(tmp_path):
     out = tmp_path / "out.txt"
     call = _tool_use("write_file", {"path": str(out), "content": "TODO"})
     client = ScriptedClient([call, call, call])  # never yields end_turn
-    agent = _agent(client, max_iterations=2)
+    agent = _agent(client, max_iterations=2, repo_root=tmp_path)
     task = GoldenTask(
         name="aborts",
         goal="write out.txt",

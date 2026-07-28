@@ -15,6 +15,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from approval import ApprovalMode
+
 
 class ForgeConfig(BaseModel):
     # extra="forbid": a typo'd key in a config.toml is a loud error, not a
@@ -28,8 +30,7 @@ class ForgeConfig(BaseModel):
     # None => allow every registered tool. A list in TOML coerces to a set.
     allowlist: set[str] | None = None
     user_tools_dir: Path = Path.home() / ".forge" / "tools"
-    # TODO(phase-5): real approval modes replace this stub-carried flag.
-    auto_approve: bool = True
+    approval_mode: ApprovalMode = ApprovalMode.ON_REQUEST
 
 
 def _read_toml(path: Path) -> dict:

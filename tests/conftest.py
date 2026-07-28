@@ -70,3 +70,25 @@ except Exception:  # noqa: BLE001 -- collection must not crash when PG is absent
 
 # Redirect the whole suite. Set before any test module reads FORGE_LEDGER_DSN.
 os.environ["FORGE_LEDGER_DSN"] = _TEST_DSN
+
+
+import pytest  # noqa: E402
+
+from approval import ApprovalRequest, Decision  # noqa: E402
+
+
+class ScriptedApprover:
+    """Test double: returns queued Decisions in order; records requests seen."""
+
+    def __init__(self, decisions: list[Decision]) -> None:
+        self._decisions = list(decisions)
+        self.seen: list[ApprovalRequest] = []
+
+    async def decide(self, request: ApprovalRequest) -> Decision:
+        self.seen.append(request)
+        return self._decisions.pop(0)
+
+
+@pytest.fixture
+def ScriptedApprover_():
+    return ScriptedApprover

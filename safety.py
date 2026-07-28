@@ -1,7 +1,6 @@
 import re
 from pathlib import Path
 
-
 _DANGEROUS = [
     (re.compile(r"\brm\s+-[a-z]*r[a-z]*f"), "recursive force remove (rm -rf)"),
     (re.compile(r"\bsudo\b"), "privilege escalation (sudo)"),

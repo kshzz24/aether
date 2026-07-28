@@ -66,3 +66,23 @@ def test_unknown_key_is_rejected_loudly(tmp_path):
 def test_bad_type_is_rejected():
     with pytest.raises(ValidationError):
         ForgeConfig(max_iterations="not-an-int")
+
+
+def test_approval_mode_defaults_to_on_request(tmp_path):
+    from approval import ApprovalMode
+
+    cfg = load_config(
+        {}, system_path=tmp_path / "sys.toml", project_path=tmp_path / "proj.toml"
+    )
+    assert cfg.approval_mode is ApprovalMode.ON_REQUEST
+
+
+def test_approval_mode_override_parses_enum(tmp_path):
+    from approval import ApprovalMode
+
+    cfg = load_config(
+        {"approval_mode": "never"},
+        system_path=tmp_path / "sys.toml",
+        project_path=tmp_path / "proj.toml",
+    )
+    assert cfg.approval_mode is ApprovalMode.NEVER

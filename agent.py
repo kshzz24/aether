@@ -1,5 +1,9 @@
+import hashlib
 from collections.abc import AsyncIterator
+from pathlib import Path
 
+import safety
+from approval import ApprovalMode, ApprovalRequest, Approver, Verdict
 from client import (
     LLMClient,
     Message,
@@ -11,6 +15,7 @@ from client import (
 from context.compactor import compact, needs_compaction
 from context.loop_detector import LoopDetector
 from events import (
+    ApprovalDecisionEvent,
     ConfirmRequestEvent,
     CostEvent,
     Event,
@@ -21,11 +26,18 @@ from events import (
     ToolCallEvent,
     ToolResultEvent,
 )
-from tools.base import ToolKind
+from policy import PolicyEngine
 from tools.hooks import Hooks
 from tools.registry import ToolRegistry
 
 CONTEXT_WINDOW_SIZE = 128000
+
+
+def _hash_file(path: str) -> str | None:
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return None
 
 
 class Agent:
@@ -37,7 +49,9 @@ class Agent:
         system: str,
         max_iterations: int,
         max_cost_usd: float,
-        auto_approve: bool = True,
+        policy: PolicyEngine | None = None,
+        approver: Approver | None = None,
+        repo_root: Path | None = None,
         hooks: Hooks | None = None,
     ) -> None:
         self.client = client
@@ -46,13 +60,11 @@ class Agent:
         self.system = system
         self.max_iterations = max_iterations
         self.max_cost_usd = max_cost_usd
+        self.policy = policy if policy is not None else PolicyEngine(ApprovalMode.AUTO)
+        self.repo_root = repo_root or Path.cwd()
         self.max_context_token = CONTEXT_WINDOW_SIZE
-        self._auto_approve = auto_approve
         self.hooks = hooks or Hooks()
-
-    def _resolve_confirmation(self, tool_name: str, arguments: dict) -> bool:
-        # TODO(phase-5): the Approver replaces this stub with real policy modes.
-        return self._auto_approve
+        self._approver = approver
 
     async def run(self, goal: str) -> AsyncIterator[Event]:
         self.hooks.before_run(goal)
@@ -129,24 +141,78 @@ class Agent:
                         result_str = f"ERROR: {e}"
                         self.hooks.on_error(e)
                     else:
-                        is_dangerous = tool.kind is ToolKind.EXECUTE
-                        if is_dangerous:
+                        danger = []
+
+                        if "command" in block.arguments:
+                            danger += safety.dangerous_command(
+                                block.arguments["command"]
+                            )
+                        danger += safety.path_escape(
+                            block.arguments, repo_root=self.repo_root
+                        )
+
+                        preview = (
+                            await tool.preview(block.arguments)
+                            if tool.preview
+                            else None
+                        )
+
+                        verdict, deny_reason = self.policy.evaluate(
+                            tool.kind, danger_reasons=danger
+                        )
+
+                        request = ApprovalRequest(
+                            block.name,
+                            block.arguments,
+                            tool.kind,
+                            danger,
+                            preview.diff if preview else None,
+                        )
+
+                        if verdict is Verdict.ASK:
                             yield ConfirmRequestEvent(
                                 tool_name=block.name,
                                 arguments=block.arguments,
-                                reason="dangerous tool",
+                                reason="approval required",
                             )
 
-                        if is_dangerous and not self._resolve_confirmation(
-                            block.name, block.arguments
-                        ):
-                            result_str = "DENIED: user declined to run this tool"
+                            decision = await self._approver.decide(request)
+                            approved = decision.approved
+
+                            deny_reason = decision.reason or "user declined"
+                            source = "human"
                         else:
-                            try:
-                                result_str = await tool.run(block.arguments)
-                            except Exception as e:
-                                result_str = f"ERROR: {e}  "
-                                self.hooks.on_error(e)
+                            approved = verdict is Verdict.AUTO_APPROVE
+                            source = "policy"
+
+                        yield ApprovalDecisionEvent(
+                            type="approval_decision",
+                            tool_name=block.name,
+                            kind=tool.kind,
+                            danger_reasons=danger,
+                            verdict=verdict,
+                            approved=approved,
+                            source=source,
+                        )
+
+                        if approved:
+                            stale = (
+                                preview is not None
+                                and preview.base_hash is not None
+                                and _hash_file(preview.hashed_path) != preview.base_hash
+                            )
+                            if stale:
+                                result_str = (
+                                    "ERROR: file changed since approval; not applied"
+                                )
+                            else:
+                                try:
+                                    result_str = await tool.run(block.arguments)
+                                except Exception as e:
+                                    result_str = f"ERROR: {e}  "
+                                    self.hooks.on_error(e)
+                        else:
+                            result_str = f"DENIED: {deny_reason}"
 
                     self.hooks.after_tool(block.name, block.arguments, result_str)
                     detector.record(block.name, block.arguments, result_str)

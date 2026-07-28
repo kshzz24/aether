@@ -9,14 +9,18 @@ import argparse
 import asyncio
 import os
 import tomllib
+from pathlib import Path
 
 from agent import Agent
+from cli.approver import CliApprover
 from cli.renderer import Renderer
 from client import make_client
 from config import load_config
 from gateway.client import GatewayClient
+from policy import PolicyEngine
 from tools import build_registry
 from tools.hooks import Hooks
+from tools.traversal import find_repo_root
 
 # Per-token (USD) pricing as (input_rate, output_rate). $/token = $/Mtok / 1e6.
 
@@ -79,7 +83,9 @@ async def _run(goal: str, args: argparse.Namespace) -> None:
         system=SYSTEM,
         max_iterations=config.max_iterations,
         max_cost_usd=config.max_cost_usd,
-        auto_approve=config.auto_approve,
+        policy=PolicyEngine(config.approval_mode),
+        approver=CliApprover(),
+        repo_root=find_repo_root(Path.cwd()) or Path.cwd(),
         hooks=Hooks(),
     )
 

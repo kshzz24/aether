@@ -12,12 +12,20 @@ class ToolKind(Enum):
 
 
 @dataclass(frozen=True)
+class PreviewResult:
+    diff: str
+    base_hash: str | None = None
+    hashed_path: str | None = None
+
+
+@dataclass(frozen=True)
 class Tool:
     name: str
     description: str
     parameters: dict
     kind: ToolKind
     run: Callable[[dict], Awaitable[str]]
+    preview: Callable[[dict], Awaitable[PreviewResult]] | None = None
 
     def to_wire(self):
         return {
@@ -33,6 +41,7 @@ class Tool:
         parameters = module.SCHEMA["parameters"]
         kind = module.KIND
         run = module.run
+        preview = getattr(module, "PREVIEW", None)
 
         return Tool(
             name=name,
@@ -40,4 +49,5 @@ class Tool:
             parameters=parameters,
             kind=kind,
             run=run,
+            preview=preview,
         )

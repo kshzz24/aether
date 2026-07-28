@@ -241,92 +241,70 @@ def _run_shell_then_finish() -> list[NormalizedResponse]:
     ]
 
 
-def test_dangerous_tool_surfaces_confirm_and_runs_when_auto_approved():
-    # An EXECUTE-kind tool is dangerous, so the request is always surfaced. With
-    # auto_approve=True the stubbed resolver says yes and the tool runs.
-    ran = {"count": 0}
+def _build_agent(client, registry, *, mode, approver):
+    from approval import ApprovalMode  # noqa: F401
+    from policy import PolicyEngine
+    return Agent(
+        client=client, model="m", registry=registry, system="s",
+        max_iterations=5, max_cost_usd=10.0,
+        policy=PolicyEngine(mode), approver=approver,
+    )
 
+
+def test_on_request_approved_runs_and_surfaces_confirm(ScriptedApprover_):
+    from approval import ApprovalMode, Decision
+    ran = {"n": 0}
     async def shell(args):
-        ran["count"] += 1
+        ran["n"] += 1
         return "executed"
-
-    client = StubClient(_run_shell_then_finish())
-    agent = Agent(
-        client=client, model="m",
-        registry=make_registry(make_tool("run_shell", shell, kind=ToolKind.EXECUTE)),
-        system="s", max_iterations=5, max_cost_usd=10.0, auto_approve=True,
+    approver = ScriptedApprover_([Decision(approved=True)])
+    agent = _build_agent(
+        StubClient(_run_shell_then_finish()),
+        make_registry(make_tool("run_shell", shell, kind=ToolKind.EXECUTE)),
+        mode=ApprovalMode.ON_REQUEST, approver=approver,
     )
-
     events = collect(agent, "go")
-
-    confirms = [e for e in events if isinstance(e, ConfirmRequestEvent)]
-    assert confirms, "a dangerous tool must always surface a ConfirmRequestEvent"
-    assert confirms[0].tool_name == "run_shell"
-    assert confirms[0].arguments == {"cmd": "rm -rf /"}
-    assert confirms[0].reason  # a non-empty reason the renderer can display
-    # Approved -> it actually ran and the model saw the real output.
-    assert ran["count"] == 1
-    results = [e for e in events if isinstance(e, ToolResultEvent)]
-    assert results and results[0].result == "executed"
+    assert [e for e in events if isinstance(e, ConfirmRequestEvent)]
+    assert ran["n"] == 1
+    assert approver.seen and approver.seen[0].tool_name == "run_shell"
 
 
-def test_dangerous_tool_surfaces_confirm_and_is_denied_when_not_auto_approved():
-    # Same call, but the stubbed resolver says no. The request is still
-    # surfaced; the tool must NOT run and the model gets a denial observation
-    # to react to (not the real output).
-    ran = {"count": 0}
-
+def test_on_request_denied_does_not_run_but_feeds_observation(ScriptedApprover_):
+    from approval import ApprovalMode, Decision
+    ran = {"n": 0}
     async def shell(args):
-        ran["count"] += 1
+        ran["n"] += 1
         return "executed"
-
-    client = StubClient(_run_shell_then_finish())
-    agent = Agent(
-        client=client, model="m",
-        registry=make_registry(make_tool("run_shell", shell, kind=ToolKind.EXECUTE)),
-        system="s", max_iterations=5, max_cost_usd=10.0, auto_approve=False,
+    agent = _build_agent(
+        StubClient(_run_shell_then_finish()),
+        make_registry(make_tool("run_shell", shell, kind=ToolKind.EXECUTE)),
+        mode=ApprovalMode.ON_REQUEST,
+        approver=ScriptedApprover_([Decision(approved=False)]),
     )
-
     events = collect(agent, "go")
-
-    confirms = [e for e in events if isinstance(e, ConfirmRequestEvent)]
-    assert confirms and confirms[0].tool_name == "run_shell"
-    # Denied -> the tool body never executed...
-    assert ran["count"] == 0
-    # ...but the loop still fed an observation back so the model can self-correct.
+    assert ran["n"] == 0
     results = [e for e in events if isinstance(e, ToolResultEvent)]
-    assert results, "a denied tool still owes the model an observation"
-    assert results[0].result != "executed"
+    assert results and results[0].result.startswith("DENIED")
 
 
-def test_safe_tool_bypasses_confirmation_even_when_not_auto_approved():
-    # A READ-kind tool is NOT dangerous: no confirmation seam, runs regardless of
-    # the auto_approve flag. Proves the gate is scoped to EXECUTE tools only.
-    async def read_file(args):
-        return "file body"
-
-    responses = [
-        NormalizedResponse(
-            blocks=[ToolCallBlock(id="c1", name="read_file", arguments={"path": "a"})],
-            input_tokens=1, output_tokens=1, cost_usd=0.0, stop_reason="tool_use",
-        ),
-        NormalizedResponse(
-            blocks=[TextBlock(text="done")],
-            input_tokens=1, output_tokens=1, cost_usd=0.0, stop_reason="end_turn",
-        ),
-    ]
-    client = StubClient(responses)
-    agent = Agent(
-        client=client, model="m",
-        registry=make_registry(make_tool("read_file", read_file, kind=ToolKind.READ)),
-        system="s", max_iterations=5, max_cost_usd=10.0, auto_approve=False,
+def test_never_mode_auto_denies_without_calling_approver(ScriptedApprover_):
+    from approval import ApprovalMode
+    ran = {"n": 0}
+    async def shell(args):
+        ran["n"] += 1
+        return "executed"
+    approver = ScriptedApprover_([])  # empty: any decide() call would IndexError
+    agent = _build_agent(
+        StubClient(_run_shell_then_finish()),
+        make_registry(make_tool("run_shell", shell, kind=ToolKind.EXECUTE)),
+        mode=ApprovalMode.NEVER, approver=approver,
     )
-
     events = collect(agent, "go")
-
-    assert not any(isinstance(e, ConfirmRequestEvent) for e in events)
-    results = [e for e in events if isinstance(e, ToolResultEvent)]
-    assert results and results[0].result == "file body"
+    assert ran["n"] == 0
+    assert approver.seen == []  # approver never consulted under NEVER
+    from events import ApprovalDecisionEvent
+    decisions = [e for e in events if isinstance(e, ApprovalDecisionEvent)]
+    assert decisions and decisions[0].source == "policy"
 
 
 def test_hooks_fire_at_their_points_during_a_run():
@@ -391,3 +369,46 @@ def test_on_error_hook_fires_on_tool_failure():
 
     assert errors and isinstance(errors[0], ValueError)
     assert "kaboom" in str(errors[0])
+
+
+def test_edit_file_base_hash_mismatch_blocks_apply(tmp_path, ScriptedApprover_):
+    # A real edit_file call previewed against base B, but the file changes to B'
+    # before apply -> the loop must refuse to apply the stale diff.
+    from dataclasses import replace
+
+    from approval import ApprovalMode, Decision
+    from tools.base import PreviewResult
+
+    f = tmp_path / "c.py"
+    f.write_text("a = 1\n", encoding="utf-8")
+
+    async def _run(args):  # would apply if reached
+        f.write_text("APPLIED\n", encoding="utf-8")
+        return "applied"
+
+    async def _preview(args):
+        # base hash of some *other* content -> guaranteed mismatch at apply
+        return PreviewResult(diff="d", base_hash="deadbeef", hashed_path=str(f))
+
+    tool = replace(make_tool("edit_file", _run, kind=ToolKind.WRITE),
+                   preview=_preview)  # frozen-dataclass-safe way to attach preview
+
+    responses = [
+        NormalizedResponse(
+            blocks=[ToolCallBlock(id="c1", name="edit_file",
+                                  arguments={"path": str(f)})],
+            input_tokens=1, output_tokens=1, cost_usd=0.0, stop_reason="tool_use"),
+        NormalizedResponse(blocks=[TextBlock(text="ok")], input_tokens=1,
+                           output_tokens=1, cost_usd=0.0, stop_reason="end_turn"),
+    ]
+    # Approve unconditionally: the path is under tmp_path (outside cwd/repo_root),
+    # so path_escape may force ASK under AUTO -- approving isolates the hash guard,
+    # which runs AFTER approval regardless of the verdict path.
+    agent = _build_agent(StubClient(responses), make_registry(tool),
+                         mode=ApprovalMode.AUTO,
+                         approver=ScriptedApprover_([Decision(approved=True)]))
+    events = collect(agent, "go")
+
+    results = [e for e in events if isinstance(e, ToolResultEvent)]
+    assert results and "file changed since approval" in results[0].result
+    assert f.read_text(encoding="utf-8") == "a = 1\n"  # never applied

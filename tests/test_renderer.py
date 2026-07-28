@@ -18,8 +18,10 @@ upgrade on top of this; this is the floor.
 
 from typing import get_args
 
+from approval import Verdict
 from cli.renderer import Renderer
 from events import (
+    ApprovalDecisionEvent,
     ConfirmRequestEvent,
     CostEvent,
     Event,
@@ -30,6 +32,7 @@ from events import (
     ToolCallEvent,
     ToolResultEvent,
 )
+from tools.base import ToolKind
 
 
 def _one_of_each() -> list[Event]:
@@ -45,6 +48,15 @@ def _one_of_each() -> list[Event]:
             reason="destructive shell command",
         ),
         TerminalEvent(reason=TerminalReason.COMPLETED, detail=""),
+        ApprovalDecisionEvent(
+            type="approval_decision",
+            tool_name="write_file",
+            kind=ToolKind.WRITE,
+            danger_reasons=[],
+            verdict=Verdict.AUTO_APPROVE,
+            approved=True,
+            source="policy",
+        ),
     ]
 
 
@@ -64,3 +76,13 @@ def test_renderer_produces_output_for_every_event_type(capsys):
         renderer.render(event)
         out = capsys.readouterr().out
         assert out.strip(), f"{type(event).__name__} rendered nothing"
+
+
+def test_renderer_handles_approval_decision_event(capsys):
+    Renderer().render(ApprovalDecisionEvent(
+        type="approval_decision", tool_name="write_file", kind=ToolKind.WRITE,
+        danger_reasons=[], verdict=Verdict.AUTO_APPROVE, approved=True,
+        source="policy",
+    ))
+    out = capsys.readouterr().out
+    assert "write_file" in out

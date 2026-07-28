@@ -1,8 +1,14 @@
-from config import ForgeConfig
-from tools import edit_file, read_file, run_shell, write_file, grep, glob, list_dir
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from tools import edit_file, glob, grep, list_dir, read_file, run_shell, write_file
 from tools.base import Tool
 from tools.loader import load_user_tools
 from tools.registry import ToolRegistry
+
+if TYPE_CHECKING:
+    from config import ForgeConfig
 
 _BUILTIN_MODULES = [read_file, write_file, run_shell, edit_file, grep, glob, list_dir]
 

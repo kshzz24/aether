@@ -95,7 +95,7 @@ async def test_list_dir_non_recursive(repo):
     assert "src/" in lines
     assert "a.py" in lines
     assert "notes.log" not in lines            # gitignored
-    assert ".git/" not in lines                # .git dir skipped (.gitignore file is fine)
+    assert ".git/" not in lines                # .git dir skipped (.gitignore is fine)
     assert "d.py" not in lines                 # nested: not listed
     assert lines.index("src/") < lines.index("a.py")  # dirs first
 

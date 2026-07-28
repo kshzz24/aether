@@ -11,7 +11,6 @@ import pytest
 
 from gateway.breaker import BreakerOpen, CircuitBreaker, call_with_resilience
 
-
 # --- state machine -----------------------------------------------------------
 
 def test_starts_closed_and_allows():

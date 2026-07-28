@@ -16,7 +16,7 @@ dist/
 *.egg-info/
 .eggs/
 pip-wheel-metadata/
-
+graphify-out/
 # Testing / coverage
 .pytest_cache/
 .coverage

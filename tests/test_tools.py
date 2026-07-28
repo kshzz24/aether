@@ -130,7 +130,7 @@ def test_edit_file_non_unique_raises(tmp_path):
         ))
 
 
-def test_build_registry_returns_four_named_builtins():
+def test_build_registry_returns_named_builtins():
     from config import ForgeConfig
     from tools import build_registry
     from tools.base import Tool, ToolKind
@@ -138,7 +138,8 @@ def test_build_registry_returns_four_named_builtins():
     registry = build_registry(ForgeConfig())
     tools = registry.list()
     assert {t.name for t in tools} == {
-        "read_file", "write_file", "run_shell", "edit_file"
+        "read_file", "write_file", "run_shell", "edit_file",
+        "grep", "glob", "list_dir",
     }
     assert all(isinstance(t, Tool) for t in tools)
     # run_shell is the only EXECUTE (dangerous) builtin.
@@ -147,3 +148,54 @@ def test_build_registry_returns_four_named_builtins():
     assert kinds["read_file"] is ToolKind.READ
     assert kinds["write_file"] is ToolKind.WRITE
     assert kinds["edit_file"] is ToolKind.WRITE
+    assert kinds["grep"] is ToolKind.READ
+    assert kinds["glob"] is ToolKind.READ
+    assert kinds["list_dir"] is ToolKind.READ
+
+
+def test_write_file_preview_returns_diff_no_hash(tmp_path):
+    from tools import write_file
+
+    f = tmp_path / "a.txt"
+    f.write_text("old\n", encoding="utf-8")
+    pv = drive(write_file.PREVIEW({"path": str(f), "content": "new\n"}))
+    assert "old" in pv.diff and "new" in pv.diff
+    assert pv.base_hash is None
+
+
+def test_edit_file_preview_returns_diff_and_base_hash(tmp_path):
+    import hashlib
+
+    from tools import edit_file
+
+    f = tmp_path / "c.py"
+    text = "a = 1\nb = 2\n"
+    f.write_text(text, encoding="utf-8")
+    pv = drive(edit_file.PREVIEW(
+        {"path": str(f), "old_string": "b = 2", "new_string": "b = 3"}
+    ))
+    assert "-b = 2" in pv.diff and "+b = 3" in pv.diff
+    assert pv.base_hash == hashlib.sha256(text.encode("utf-8")).hexdigest()
+    assert pv.hashed_path == str(f)
+
+
+def test_tool_from_module_picks_up_optional_preview():
+    import types
+
+    from tools.base import Tool, ToolKind
+
+    async def _run(args): return "ok"
+    async def _preview(args): return "PV"
+
+    mod = types.SimpleNamespace(
+        SCHEMA={"name": "t", "description": "d", "parameters": {}},
+        KIND=ToolKind.WRITE, run=_run, PREVIEW=_preview,
+    )
+    tool = Tool.from_module(mod)
+    assert tool.preview is _preview
+
+    mod2 = types.SimpleNamespace(
+        SCHEMA={"name": "u", "description": "d", "parameters": {}},
+        KIND=ToolKind.READ, run=_run,
+    )
+    assert Tool.from_module(mod2).preview is None
