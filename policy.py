@@ -13,6 +13,9 @@ class PolicyEngine:
         if kind is ToolKind.READ:
             return Verdict.AUTO_APPROVE, None
 
+        if kind is ToolKind.AGENT:
+            return Verdict.AUTO_APPROVE, None
+
         if self.mode is ApprovalMode.NEVER:
             reason = "; ".join(danger_reasons) or f"mode=never denies {kind.name}"
             return Verdict.AUTO_DENY, reason

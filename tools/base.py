@@ -9,6 +9,7 @@ class ToolKind(Enum):
     READ = auto()
     WRITE = auto()
     EXECUTE = auto()
+    AGENT = auto()
 
 
 @dataclass(frozen=True)

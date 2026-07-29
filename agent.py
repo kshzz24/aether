@@ -20,6 +20,7 @@ from events import (
     CostEvent,
     Event,
     StatusEvent,
+    SubagentEvent,
     TerminalEvent,
     TerminalReason,
     TextEvent,
@@ -27,6 +28,7 @@ from events import (
     ToolResultEvent,
 )
 from policy import PolicyEngine
+from tools.base import ToolKind
 from tools.hooks import Hooks
 from tools.registry import ToolRegistry
 
@@ -206,11 +208,27 @@ class Agent:
                                     "ERROR: file changed since approval; not applied"
                                 )
                             else:
+                                is_agent = tool.kind is ToolKind.AGENT
+                                if is_agent:
+                                    yield SubagentEvent(
+                                        type="subagent",
+                                        task=str(
+                                            block.arguments.get("prompt", ""),
+                                        ),
+                                        phase="started",
+                                    )
                                 try:
                                     result_str = await tool.run(block.arguments)
                                 except Exception as e:
                                     result_str = f"ERROR: {e}  "
                                     self.hooks.on_error(e)
+
+                                if is_agent:
+                                    yield SubagentEvent(
+                                        type="subagent",
+                                        task=str(block.arguments.get("prompt", "")),
+                                        phase="completed",
+                                    )
                         else:
                             result_str = f"DENIED: {deny_reason}"
 

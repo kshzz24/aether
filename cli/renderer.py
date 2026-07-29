@@ -12,6 +12,7 @@ from events import (
     CostEvent,
     Event,
     StatusEvent,
+    SubagentEvent,
     TerminalEvent,
     TextEvent,
     ToolCallEvent,
@@ -57,6 +58,13 @@ class Renderer:
 
             case ToolResultEvent(result=result):
                 print(_indent(_truncate(result)))
+
+            case SubagentEvent(task=task, phase=phase, detail=detail):
+                if phase == "started":
+                    print(f"\n[ subagent -> {task} ]")
+                else:
+                    suffix = f": {detail}" if detail else ""
+                    print(f"[ subagent done{suffix} ]")
 
             case CostEvent(cost_usd=cost_usd, total_cost_usd=total):
                 print(f"  [${cost_usd:.4f} this turn | ${total:.4f} total]")

@@ -31,6 +31,8 @@ class ForgeConfig(BaseModel):
     allowlist: set[str] | None = None
     user_tools_dir: Path = Path.home() / ".forge" / "tools"
     approval_mode: ApprovalMode = ApprovalMode.ON_REQUEST
+    subagent_max_iterations: int = 15
+    subagent_max_cost_usd: float = 0.5
 
 
 def _read_toml(path: Path) -> dict:

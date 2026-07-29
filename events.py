@@ -71,6 +71,14 @@ class ApprovalDecisionEvent:
     source: Literal["policy", "human"]
 
 
+@dataclass(frozen=True)
+class SubagentEvent:
+    type: Literal["subagent"]
+    task: str
+    phase: Literal["started", "completed"]
+    detail: str = ""
+
+
 Event: TypeAlias = (
     StatusEvent
     | TextEvent
@@ -80,4 +88,5 @@ Event: TypeAlias = (
     | TerminalEvent
     | ConfirmRequestEvent
     | ApprovalDecisionEvent
+    | SubagentEvent
 )

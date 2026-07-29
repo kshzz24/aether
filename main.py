@@ -8,6 +8,7 @@ directly (the renderer owns stdout).
 import argparse
 import asyncio
 import os
+import sys
 import tomllib
 from pathlib import Path
 
@@ -20,11 +21,17 @@ from gateway.client import GatewayClient
 from policy import PolicyEngine
 from tools import build_registry
 from tools.hooks import Hooks
+from tools.subagent import build_subagent_tool
 from tools.traversal import find_repo_root
 
 # Per-token (USD) pricing as (input_rate, output_rate). $/token = $/Mtok / 1e6.
 
-
+SUBAGENT_SYSTEM = (
+    "You are a FORGE subagent: a focused worker spawned to carry out one "
+    "delegated task. You have the full toolset. Work in small steps, then end "
+    "with a concise summary of what you did or found — that summary is the only "
+    "thing returned to the parent agent."
+)
 # Environment variable holding the API key, per provider.
 ENV_KEYS: dict[str, str] = {
     "anthropic": "ANTHROPIC_API_KEY",
@@ -47,6 +54,7 @@ async def _run(goal: str, args: argparse.Namespace) -> None:
     # gateway_url is a composition-root concern, not validated config: ForgeConfig
     # uses extra="forbid", so pull it out before the merge. (For .forge/config.toml
     # support, add a gateway_url field to ForgeConfig; left CLI-only here by scope.)
+
     gateway_url = args.gateway_url
 
     # Only flags the user *explicitly* set reach the config merge; unset flags
@@ -75,17 +83,37 @@ async def _run(goal: str, args: argparse.Namespace) -> None:
             fallback=client,
             rates=rates,
         )
+    approver = CliApprover()
+    repo_root = find_repo_root(Path.cwd()) or Path.cwd()
+    child_registry = build_registry(config)
+
+    def make_child() -> Agent:
+        return Agent(
+            client=client,
+            model=config.model,
+            registry=child_registry,
+            system=SUBAGENT_SYSTEM,
+            max_iterations=config.subagent_max_iterations,
+            max_cost_usd=config.subagent_max_cost_usd,
+            policy=PolicyEngine(config.approval_mode),
+            approver=approver,
+            repo_root=repo_root,
+            hooks=Hooks(),
+        )
+
+    registry = build_registry(config)
+    registry.register(build_subagent_tool(make_child=make_child))
 
     agent = Agent(
         client=client,
         model=config.model,
-        registry=build_registry(config),
+        registry=registry,
         system=SYSTEM,
         max_iterations=config.max_iterations,
         max_cost_usd=config.max_cost_usd,
         policy=PolicyEngine(config.approval_mode),
-        approver=CliApprover(),
-        repo_root=find_repo_root(Path.cwd()) or Path.cwd(),
+        approver=approver,
+        repo_root=repo_root,
         hooks=Hooks(),
     )
 
@@ -95,6 +123,14 @@ async def _run(goal: str, args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    # Windows consoles default to cp1252; model output routinely contains
+    # characters outside it (em-dashes, smart quotes, non-breaking hyphens).
+    # Render as UTF-8 so a stray character never crashes a run.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8")
+
     parser = argparse.ArgumentParser(
         prog="forge", description="FORGE - an agentic CLI coding assistant"
     )
