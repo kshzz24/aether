@@ -10,13 +10,16 @@ import asyncio
 import os
 import sys
 import tomllib
+from datetime import datetime
 from pathlib import Path
 
+import persistence
 from agent import Agent
 from cli.approver import CliApprover
 from cli.renderer import Renderer
 from client import make_client
 from config import load_config
+from events import StatusEvent, TerminalEvent
 from gateway.client import GatewayClient
 from policy import PolicyEngine
 from tools import build_registry
@@ -50,11 +53,23 @@ SYSTEM = (
 )
 
 
-async def _run(goal: str, args: argparse.Namespace) -> None:
+async def _run(args: argparse.Namespace) -> None:
+    sessions_dir = persistence.default_sessions_dir()
+    renderer = Renderer()
+
+    # Resume: load the saved session. Its provider/model/goal drive the run so it
+    # continues faithfully; the saved messages seed the loop as history.
+    resume_session = None
+    if args.resume:
+        try:
+            resume_session = persistence.load(args.resume, sessions_dir)
+        except (OSError, ValueError) as exc:
+            renderer.notice(f"cannot resume {args.resume!r}: {exc}")
+            return
+
     # gateway_url is a composition-root concern, not validated config: ForgeConfig
     # uses extra="forbid", so pull it out before the merge. (For .forge/config.toml
     # support, add a gateway_url field to ForgeConfig; left CLI-only here by scope.)
-
     gateway_url = args.gateway_url
 
     # Only flags the user *explicitly* set reach the config merge; unset flags
@@ -62,24 +77,29 @@ async def _run(goal: str, args: argparse.Namespace) -> None:
     cli_overrides = {
         k: v
         for k, v in vars(args).items()
-        if k not in ("goal", "gateway_url") and v is not None
+        if k not in ("goal", "gateway_url", "resume", "list_sessions")
+        and v is not None
     }
     config = load_config(cli_overrides)
 
+    # On resume the session's provider/model/goal win; otherwise use config + argv.
+    provider = resume_session.provider if resume_session else config.provider
+    model = resume_session.model if resume_session else config.model
+    goal = resume_session.goal if resume_session else args.goal
+    history = resume_session.messages if resume_session else None
+
     with open("prices.toml", "rb") as f:
         prices = tomllib.load(f)
-    api_key = os.environ.get(ENV_KEYS.get(config.provider, ""), "")
-    rates = prices.get(config.provider, {})
+    api_key = os.environ.get(ENV_KEYS.get(provider, ""), "")
+    rates = prices.get(provider, {})
 
     # The direct provider client. With a gateway configured it becomes the
     # degrade-to-passthrough fallback; otherwise the agent talks to it directly.
-    client = make_client(
-        provider=config.provider, model=config.model, api_key=api_key, rates=rates
-    )
+    client = make_client(provider=provider, model=model, api_key=api_key, rates=rates)
     if gateway_url:
         client = GatewayClient(
             gateway_url=gateway_url,
-            model=config.model,
+            model=model,
             fallback=client,
             rates=rates,
         )
@@ -90,7 +110,7 @@ async def _run(goal: str, args: argparse.Namespace) -> None:
     def make_child() -> Agent:
         return Agent(
             client=client,
-            model=config.model,
+            model=model,
             registry=child_registry,
             system=SUBAGENT_SYSTEM,
             max_iterations=config.subagent_max_iterations,
@@ -106,7 +126,7 @@ async def _run(goal: str, args: argparse.Namespace) -> None:
 
     agent = Agent(
         client=client,
-        model=config.model,
+        model=model,
         registry=registry,
         system=SYSTEM,
         max_iterations=config.max_iterations,
@@ -117,9 +137,30 @@ async def _run(goal: str, args: argparse.Namespace) -> None:
         hooks=Hooks(),
     )
 
-    renderer = Renderer()
-    async for event in agent.run(goal):
+    # The session we auto-checkpoint after every turn (crash-recoverable).
+    now = datetime.now().isoformat(timespec="seconds")
+    session = resume_session or persistence.Session(
+        id=persistence.new_session_id(),
+        goal=goal,
+        provider=provider,
+        model=model,
+        created_at=now,
+        updated_at=now,
+        total_cost=0.0,
+        messages=[],
+    )
+    renderer.notice(f"session {session.id}")
+
+    async for event in agent.run(goal, history=history):
         renderer.render(event)
+        # StatusEvent fires at each turn's start (state complete through the prior
+        # turn); TerminalEvent at the end. Snapshot on both — a crash loses at
+        # most the in-flight turn.
+        if isinstance(event, (StatusEvent, TerminalEvent)):
+            session.messages = agent.messages
+            session.total_cost = agent.total_cost
+            session.updated_at = datetime.now().isoformat(timespec="seconds")
+            persistence.save(session, sessions_dir)
 
 
 def main() -> None:
@@ -134,7 +175,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         prog="forge", description="FORGE - an agentic CLI coding assistant"
     )
-    parser.add_argument("goal", help="the task for the agent to accomplish")
+    parser.add_argument(
+        "goal",
+        nargs="?",
+        default=None,
+        help="the task for the agent (omit with --resume / --list-sessions)",
+    )
     # default=None so unset flags fall through to file/default config layers.
     parser.add_argument("--provider", default=None, help="LLM provider")
     parser.add_argument("--model", default=None, help="model id")
@@ -162,8 +208,30 @@ def main() -> None:
             "provider call if it is unreachable"
         ),
     )
+    parser.add_argument(
+        "--resume",
+        dest="resume",
+        default=None,
+        metavar="ID",
+        help="resume a saved session by id, continuing its original goal",
+    )
+    parser.add_argument(
+        "--list-sessions",
+        dest="list_sessions",
+        action="store_true",
+        help="list saved sessions and exit",
+    )
     args = parser.parse_args()
-    asyncio.run(_run(args.goal, args))
+
+    if args.list_sessions:
+        metas = persistence.list_sessions(persistence.default_sessions_dir())
+        Renderer().sessions(metas)
+        return
+
+    if args.resume is None and args.goal is None:
+        parser.error("a goal is required (or use --resume <id> / --list-sessions)")
+
+    asyncio.run(_run(args))
 
 
 if __name__ == "__main__":

@@ -4,7 +4,9 @@ The agent core and tools yield `Event` objects; this is where they become text.
 Keep all `print()` calls in this file (Phase 0 print-discipline invariant).
 """
 
-from typing import assert_never
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, assert_never
 
 from events import (
     ApprovalDecisionEvent,
@@ -18,6 +20,9 @@ from events import (
     ToolCallEvent,
     ToolResultEvent,
 )
+
+if TYPE_CHECKING:
+    from persistence import SessionMeta
 
 _MAX_RESULT_CHARS = 2000
 
@@ -86,3 +91,19 @@ class Renderer:
 
             case _ as unreachable:
                 assert_never(unreachable)
+
+    def notice(self, text: str) -> None:
+        """A composition-root notice (e.g. the session id) — not an Event."""
+        print(f"[ {text} ]")
+
+    def sessions(self, metas: list[SessionMeta]) -> None:
+        """Render the saved-session list for --list-sessions."""
+        if not metas:
+            print("[ no saved sessions ]")
+            return
+        for m in metas:
+            goal = m.goal if len(m.goal) <= 60 else m.goal[:57] + "..."
+            print(
+                f"{m.id}  ${m.total_cost:.4f}  {m.turns:>3} turns  "
+                f"{m.updated_at}  {goal}"
+            )

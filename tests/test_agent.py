@@ -2,6 +2,7 @@ import asyncio
 
 from agent import Agent
 from client import (
+    Message,
     NormalizedResponse,
     TextBlock,
     ToolCallBlock,
@@ -441,3 +442,56 @@ def test_agent_brackets_agent_kind_tool_with_subagent_events():
     subs = [e for e in events if isinstance(e, SubagentEvent)]
     assert [s.phase for s in subs] == ["started", "completed"]
     assert subs[0].task == "go explore"
+
+
+def test_run_resumes_from_history_without_reseeding_goal():
+    # A saved conversation awaiting the model's next move.
+    history = [
+        Message(role="user", blocks=[TextBlock(text="original goal")]),
+        Message(role="assistant",
+                blocks=[ToolCallBlock(id="c1", name="echo", arguments={})]),
+        Message(role="user",
+                blocks=[ToolResultBlock(tool_call_id="c1", content="ok")]),
+    ]
+    responses = [
+        NormalizedResponse(
+            blocks=[TextBlock(text="finished")],
+            input_tokens=1, output_tokens=1, cost_usd=0.0, stop_reason="end_turn",
+        ),
+    ]
+    client = StubClient(responses)
+    agent = Agent(
+        client=client, model="m", registry=make_registry(),
+        system="s", max_iterations=5, max_cost_usd=1.0,
+    )
+
+    async def _drive():
+        return [e async for e in agent.run("original goal", history=history)]
+
+    asyncio.run(_drive())
+
+    # The model saw exactly the resumed history on its first call -- the goal was
+    # NOT re-appended as a 4th message.
+    first_call = client.received[0]
+    assert first_call == history
+    # self.messages reflects the final state, including the new assistant turn.
+    assert agent.messages[-1].blocks[0].text == "finished"
+
+
+def test_agent_exposes_final_messages_and_cost_for_checkpointing():
+    responses = [
+        NormalizedResponse(
+            blocks=[TextBlock(text="hi")],
+            input_tokens=1, output_tokens=1, cost_usd=0.05, stop_reason="end_turn",
+        ),
+    ]
+    agent = Agent(
+        client=StubClient(responses), model="m", registry=make_registry(),
+        system="s", max_iterations=5, max_cost_usd=1.0,
+    )
+
+    collect(agent, "greet")
+
+    assert agent.messages[0].blocks[0].text == "greet"   # goal seeded
+    assert agent.messages[-1].blocks[0].text == "hi"      # final answer appended
+    assert agent.total_cost == 0.05

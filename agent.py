@@ -67,21 +67,34 @@ class Agent:
         self.max_context_token = CONTEXT_WINDOW_SIZE
         self.hooks = hooks or Hooks()
         self._approver = approver
+        # Live, resumable run state. Held as plain attributes so the driver can
+        # snapshot them for checkpointing; the agent itself never persists them
+        # (Invariant 1 — the agent does no I/O).
+        self.messages: list[Message] = []
+        self.total_cost = 0.0
 
-    async def run(self, goal: str) -> AsyncIterator[Event]:
+    async def run(
+        self, goal: str, *, history: list[Message] | None = None
+    ) -> AsyncIterator[Event]:
         self.hooks.before_run(goal)
         try:
-            async for event in self._run(goal):
+            async for event in self._run(goal, history):
                 yield event
         finally:
             self.hooks.after_run(goal)
 
-    async def _run(self, goal: str) -> AsyncIterator[Event]:
-        initial_text = TextBlock(text=goal)
-        messages = [Message(role="user", blocks=[initial_text])]
+    async def _run(
+        self, goal: str, history: list[Message] | None = None
+    ) -> AsyncIterator[Event]:
+        # Resume: the saved history already contains the goal as its first
+        # message, so it is not re-appended. Fresh run: seed with the goal.
+        if history:
+            self.messages = list(history)
+        else:
+            self.messages = [Message(role="user", blocks=[TextBlock(text=goal)])]
         tools_schemas = self.registry.wire_schemas()
 
-        total_cost = 0.0
+        self.total_cost = 0.0
         detector = LoopDetector()
 
         for _ in range(self.max_iterations):
@@ -89,7 +102,7 @@ class Agent:
 
             try:
                 response = await self.client.create(
-                    messages=messages, tools=tools_schemas, system=self.system
+                    messages=self.messages, tools=tools_schemas, system=self.system
                 )
             except ToolCallingUnsupportedError as e:
                 yield TerminalEvent(reason=TerminalReason.ERROR, detail=str(e))
@@ -97,9 +110,9 @@ class Agent:
 
             # this turn's cost.
             current_cost = response.cost_usd
-            total_cost += current_cost
+            self.total_cost += current_cost
             yield CostEvent(
-                type="cost", cost_usd=current_cost, total_cost_usd=total_cost
+                type="cost", cost_usd=current_cost, total_cost_usd=self.total_cost
             )
 
             # Surface the model's text BEFORE the stop check, so a final
@@ -108,13 +121,13 @@ class Agent:
                 if isinstance(block, TextBlock):
                     yield TextEvent(type="text", text=block.text)
 
-            messages.append(Message(role="assistant", blocks=response.blocks))
+            self.messages.append(Message(role="assistant", blocks=response.blocks))
 
             if response.stop_reason != "tool_use":
                 yield TerminalEvent(reason=TerminalReason.COMPLETED)
                 return
 
-            if total_cost >= self.max_cost_usd:
+            if self.total_cost >= self.max_cost_usd:
                 yield TerminalEvent(
                     reason=TerminalReason.MAX_COST,
                     detail="stopped: cost limit reached",
@@ -244,21 +257,23 @@ class Agent:
                     )
 
             if tool_results:
-                messages.append(Message(role="user", blocks=tool_results))
+                self.messages.append(Message(role="user", blocks=tool_results))
 
             if detector.is_looping():
                 yield TerminalEvent(reason=TerminalReason.LOOP_DETECTED)
                 return
 
             if needs_compaction(response.input_tokens, self.max_context_token):
-                messages, summary_cost = await compact(
-                    self.client, messages, keep_recent=6
+                compacted, summary_cost = await compact(
+                    self.client, self.messages, keep_recent=6
                 )
-                total_cost += summary_cost
+                # Mutate in place so the reference the driver snapshots stays live.
+                self.messages[:] = compacted
+                self.total_cost += summary_cost
                 yield CostEvent(
                     type="cost",
                     cost_usd=summary_cost,
-                    total_cost_usd=total_cost,
+                    total_cost_usd=self.total_cost,
                 )
                 yield StatusEvent(type="status", message="compacted context")
 
