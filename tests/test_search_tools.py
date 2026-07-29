@@ -1,7 +1,7 @@
 import pytest
 
 from tools import glob, grep, list_dir
-from tools.traversal import iter_files
+from traversal import iter_files
 
 
 @pytest.fixture

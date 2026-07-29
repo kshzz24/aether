@@ -4,7 +4,7 @@ from pathlib import Path
 import pathspec
 
 from tools.base import ToolKind
-from tools.traversal import iter_files
+from traversal import iter_files
 
 KIND = ToolKind.READ
 

@@ -26,7 +26,7 @@ from skills import build_skill_registry, build_skill_tool, render_skill_menu
 from tools import build_registry
 from tools.hooks import Hooks
 from tools.subagent import build_subagent_tool
-from tools.traversal import find_repo_root
+from traversal import find_repo_root
 
 # Per-token (USD) pricing as (input_rate, output_rate). $/token = $/Mtok / 1e6.
 

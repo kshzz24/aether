@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 
 from tools.base import ToolKind
-from tools.traversal import find_repo_root, load_ignore_spec
+from traversal import find_repo_root, load_ignore_spec
 
 KIND = ToolKind.READ
 

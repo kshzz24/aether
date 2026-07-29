@@ -5,7 +5,7 @@ from pathlib import Path
 import pathspec
 
 from tools.base import ToolKind
-from tools.traversal import find_repo_root, iter_files
+from traversal import find_repo_root, iter_files
 
 KIND = ToolKind.READ
 

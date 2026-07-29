@@ -64,6 +64,7 @@ desktop.ini
 # Generated files
 *.sqlite3
 *.db
+.forge/cache/
 
 # Temporary files
 tmp/
