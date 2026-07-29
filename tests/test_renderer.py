@@ -26,6 +26,7 @@ from events import (
     CostEvent,
     Event,
     StatusEvent,
+    SubagentEvent,
     TerminalEvent,
     TerminalReason,
     TextEvent,
@@ -57,6 +58,9 @@ def _one_of_each() -> list[Event]:
             approved=True,
             source="policy",
         ),
+        SubagentEvent(
+            type="subagent", task="explore the repo", phase="started",
+        ),
     ]
 
 
@@ -86,3 +90,11 @@ def test_renderer_handles_approval_decision_event(capsys):
     ))
     out = capsys.readouterr().out
     assert "write_file" in out
+
+
+def test_renderer_handles_subagent_event(capsys):
+    Renderer().render(SubagentEvent(
+        type="subagent", task="explore the repo", phase="started",
+    ))
+    out = capsys.readouterr().out
+    assert "explore the repo" in out

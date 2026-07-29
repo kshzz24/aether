@@ -34,3 +34,12 @@ def test_evaluate_table(mode, kind, danger, expected):
 def test_danger_overrides_auto_write():
     verdict, _ = PolicyEngine(ApprovalMode.AUTO).evaluate(ToolKind.WRITE, ["escape"])
     assert verdict is Verdict.ASK
+
+
+def test_agent_kind_is_auto_approved():
+    # Spawning a subagent is not itself gated; the child's own dangerous tool
+    # calls are gated inside the child by this same policy + approver.
+    engine = PolicyEngine(ApprovalMode.ON_REQUEST)
+    verdict, reason = engine.evaluate(ToolKind.AGENT, danger_reasons=[])
+    assert verdict is Verdict.AUTO_APPROVE
+    assert reason is None

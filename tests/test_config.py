@@ -86,3 +86,9 @@ def test_approval_mode_override_parses_enum(tmp_path):
         project_path=tmp_path / "proj.toml",
     )
     assert cfg.approval_mode is ApprovalMode.NEVER
+
+
+def test_subagent_bounds_have_defaults():
+    cfg = ForgeConfig()
+    assert cfg.subagent_max_iterations == 15
+    assert cfg.subagent_max_cost_usd == 0.5

@@ -11,6 +11,7 @@ from client import (
 from events import (
     ConfirmRequestEvent,
     CostEvent,
+    SubagentEvent,
     TerminalEvent,
     TerminalReason,
     TextEvent,
@@ -412,3 +413,31 @@ def test_edit_file_base_hash_mismatch_blocks_apply(tmp_path, ScriptedApprover_):
     results = [e for e in events if isinstance(e, ToolResultEvent)]
     assert results and "file changed since approval" in results[0].result
     assert f.read_text(encoding="utf-8") == "a = 1\n"  # never applied
+
+
+def test_agent_brackets_agent_kind_tool_with_subagent_events():
+    # A tool tagged ToolKind.AGENT is bracketed by SubagentEvent(started) before
+    # the run and SubagentEvent(completed) after, with task = the `prompt` arg.
+    async def fake_task(args):
+        return "distilled result"
+
+    registry = make_registry(make_tool("task", fake_task, ToolKind.AGENT))
+    responses = [
+        NormalizedResponse(
+            blocks=[ToolCallBlock(id="c1", name="task",
+                                  arguments={"prompt": "go explore"})],
+            input_tokens=1, output_tokens=1, cost_usd=0.0, stop_reason="tool_use",
+        ),
+        NormalizedResponse(
+            blocks=[TextBlock(text="done")],
+            input_tokens=1, output_tokens=1, cost_usd=0.0, stop_reason="end_turn",
+        ),
+    ]
+    agent = Agent(
+        client=StubClient(responses), model="m", registry=registry,
+        system="s", max_iterations=5, max_cost_usd=1.0,
+    )
+    events = collect(agent, "use task")
+    subs = [e for e in events if isinstance(e, SubagentEvent)]
+    assert [s.phase for s in subs] == ["started", "completed"]
+    assert subs[0].task == "go explore"
