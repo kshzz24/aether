@@ -18,6 +18,8 @@ dependencies = [
     "redis>=5.0.0",
     "numpy>=1.26.0",
     "pathspec>=0.12",
+    "tree-sitter>=0.25",
+    "tree-sitter-language-pack>=1.13",
 ]
 
 [project.optional-dependencies]
