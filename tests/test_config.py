@@ -92,3 +92,10 @@ def test_subagent_bounds_have_defaults():
     cfg = ForgeConfig()
     assert cfg.subagent_max_iterations == 15
     assert cfg.subagent_max_cost_usd == 0.5
+
+
+def test_skills_dir_has_default():
+    from pathlib import Path
+
+    cfg = ForgeConfig()
+    assert cfg.skills_dir == Path.home() / ".forge" / "skills"

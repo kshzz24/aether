@@ -30,6 +30,7 @@ class ForgeConfig(BaseModel):
     # None => allow every registered tool. A list in TOML coerces to a set.
     allowlist: set[str] | None = None
     user_tools_dir: Path = Path.home() / ".forge" / "tools"
+    skills_dir: Path = Path.home() / ".forge" / "skills"
     approval_mode: ApprovalMode = ApprovalMode.ON_REQUEST
     subagent_max_iterations: int = 15
     subagent_max_cost_usd: float = 0.5

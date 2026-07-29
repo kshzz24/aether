@@ -22,6 +22,7 @@ from config import load_config
 from events import StatusEvent, TerminalEvent
 from gateway.client import GatewayClient
 from policy import PolicyEngine
+from skills import build_skill_registry, build_skill_tool, render_skill_menu
 from tools import build_registry
 from tools.hooks import Hooks
 from tools.subagent import build_subagent_tool
@@ -52,6 +53,8 @@ SYSTEM = (
     "complete."
 )
 
+BUILTIN_SKILLS_DIR = Path(__file__).resolve().parent / "skills" / "builtin"
+
 
 async def _run(args: argparse.Namespace) -> None:
     sessions_dir = persistence.default_sessions_dir()
@@ -77,8 +80,7 @@ async def _run(args: argparse.Namespace) -> None:
     cli_overrides = {
         k: v
         for k, v in vars(args).items()
-        if k not in ("goal", "gateway_url", "resume", "list_sessions")
-        and v is not None
+        if k not in ("goal", "gateway_url", "resume", "list_sessions") and v is not None
     }
     config = load_config(cli_overrides)
 
@@ -87,6 +89,11 @@ async def _run(args: argparse.Namespace) -> None:
     model = resume_session.model if resume_session else config.model
     goal = resume_session.goal if resume_session else args.goal
     history = resume_session.messages if resume_session else None
+    skill_registry = build_skill_registry(BUILTIN_SKILLS_DIR, config.skills_dir)
+    skill_tool = build_skill_tool(registry=skill_registry)
+    menu = render_skill_menu(skill_registry.list())
+    system = SYSTEM + (f"\n\n{menu}" if menu else "")
+    subagent_system = SUBAGENT_SYSTEM + (f"\n\n{menu}" if menu else "")
 
     with open("prices.toml", "rb") as f:
         prices = tomllib.load(f)
@@ -106,13 +113,14 @@ async def _run(args: argparse.Namespace) -> None:
     approver = CliApprover()
     repo_root = find_repo_root(Path.cwd()) or Path.cwd()
     child_registry = build_registry(config)
+    child_registry.register(skill_tool)
 
     def make_child() -> Agent:
         return Agent(
             client=client,
             model=model,
             registry=child_registry,
-            system=SUBAGENT_SYSTEM,
+            system=subagent_system,
             max_iterations=config.subagent_max_iterations,
             max_cost_usd=config.subagent_max_cost_usd,
             policy=PolicyEngine(config.approval_mode),
@@ -123,12 +131,13 @@ async def _run(args: argparse.Namespace) -> None:
 
     registry = build_registry(config)
     registry.register(build_subagent_tool(make_child=make_child))
+    registry.register(skill_tool)
 
     agent = Agent(
         client=client,
         model=model,
         registry=registry,
-        system=SYSTEM,
+        system=system,
         max_iterations=config.max_iterations,
         max_cost_usd=config.max_cost_usd,
         policy=PolicyEngine(config.approval_mode),
