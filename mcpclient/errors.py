@@ -1,0 +1,2 @@
+class MCPConfigError(Exception):
+    pass
