@@ -139,7 +139,7 @@ def test_build_registry_returns_named_builtins():
     tools = registry.list()
     assert {t.name for t in tools} == {
         "read_file", "write_file", "run_shell", "edit_file",
-        "grep", "glob", "list_dir", "repo_map",
+        "grep", "glob", "list_dir", "repo_map", "todo",
     }
     assert all(isinstance(t, Tool) for t in tools)
     # run_shell is the only EXECUTE (dangerous) builtin.

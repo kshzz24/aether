@@ -1,0 +1,131 @@
+/* FORGE terminal UI.
+
+   Styling leans on Textual's theme variables ($panel, $surface, $accent) rather
+   than literal colours, so the ctrl+t theme switch actually recolours the whole
+   app instead of half of it. */
+
+#statusbar {
+    height: 1;
+    dock: top;
+    background: $panel;
+}
+
+#status-model {
+    width: auto;
+    color: $accent;
+    text-style: bold;
+}
+
+#status-activity {
+    width: 1fr;
+    color: $warning;
+}
+
+#status-cost {
+    width: auto;
+    color: $text-muted;
+}
+
+#transcript {
+    height: 1fr;
+    padding: 0 1;
+    background: $surface;
+    scrollbar-size-vertical: 1;
+}
+
+#transcript > Static {
+    margin-bottom: 1;
+}
+
+#transcript > .notice {
+    color: $accent;
+    margin-bottom: 1;
+}
+
+/* Tool calls are disclosure widgets: collapsed to one line by default so
+   verbose output never buries the model's reasoning. */
+.tool-entry {
+    border: none;
+    background: $boost;
+    margin-bottom: 1;
+}
+
+.tool-entry CollapsibleTitle {
+    color: $success;
+}
+
+/* Dimmed by /find rather than hidden: a transcript is a causal record, and
+   hiding the steps between matches makes it lie about what happened. */
+.faded {
+    opacity: 35%;
+}
+
+/* The task panel takes only the height it needs and disappears entirely when
+   the list is empty, so short runs pay nothing for it. */
+#todos {
+    dock: bottom;
+    height: auto;
+    max-height: 10;
+    padding: 0 1;
+    background: $panel;
+    border-top: solid $accent;
+}
+
+#prompt {
+    dock: bottom;
+    height: auto;
+    max-height: 12;
+    border: tall $accent;
+    background: $surface;
+}
+
+#prompt:focus {
+    border: tall $accent-lighten-1;
+}
+
+#hints {
+    dock: bottom;
+    height: auto;
+    max-height: 1;
+    padding: 0 1;
+    color: $text-muted;
+    background: $panel;
+}
+
+ConfirmScreen {
+    align: center middle;
+    background: $background 60%;
+}
+
+#confirm-body {
+    width: 80%;
+    max-width: 100;
+    height: auto;
+    max-height: 80%;
+    padding: 1 2;
+    border: thick $warning;
+    background: $surface;
+}
+
+#confirm-title {
+    color: $warning;
+    text-style: bold;
+    padding-bottom: 1;
+}
+
+#confirm-args {
+    color: $text-muted;
+}
+
+#confirm-danger {
+    padding-top: 1;
+}
+
+#confirm-diff {
+    padding-top: 1;
+}
+
+#confirm-keys {
+    padding-top: 1;
+    text-align: center;
+}

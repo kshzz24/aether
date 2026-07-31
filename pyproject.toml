@@ -20,6 +20,8 @@ dependencies = [
     "pathspec>=0.12",
     "tree-sitter>=0.25",
     "tree-sitter-language-pack>=1.13",
+    "textual>=8.2",
+    "mcp>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +35,39 @@ dev = [
 
 [project.scripts]
 forge = "main:main"
+
+# Flat layout with several top-level packages, so auto-discovery refuses to
+# guess. Note `tools` MUST be listed: setuptools excludes that name by
+# convention, and omitting it installs a FORGE with no tools at all.
+[tool.setuptools]
+packages = [
+    "cli",
+    "context",
+    "evals",
+    "gateway",
+    "mcpclient",
+    "repomap",
+    "skills",
+    "tools",
+    "tui",
+]
+py-modules = [
+    "agent",
+    "approval",
+    "client",
+    "config",
+    "events",
+    "main",
+    "persistence",
+    "policy",
+    "resilience",
+    "safety",
+    "traversal",
+]
+
+[tool.setuptools.package-data]
+tui = ["*.tcss"]
+skills = ["builtin/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
