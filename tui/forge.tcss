@@ -1,8 +1,17 @@
 /* FORGE terminal UI.
 
-   Styling leans on Textual's theme variables ($panel, $surface, $accent) rather
-   than literal colours, so the ctrl+t theme switch actually recolours the whole
-   app instead of half of it. */
+   Every colour here is a theme variable. A literal hex would be a spot the
+   ctrl+t theme switch cannot reach, which is how apps end up half-themed --
+   `grep -nE "#[0-9a-fA-F]{6}" tui/forge.tcss` is the gate that keeps this true.
+
+   The layout leans on a left gutter rail per entry rather than boxes: it marks
+   who is speaking without spending two lines of border on every turn. */
+
+Screen {
+    background: $background;
+}
+
+/* ── status bar ─────────────────────────────────────────────── */
 
 #statusbar {
     height: 1;
@@ -16,9 +25,21 @@
     text-style: bold;
 }
 
+#status-rules {
+    width: auto;
+    color: $success;
+}
+
 #status-activity {
     width: 1fr;
     color: $warning;
+}
+
+/* How full the context window is. Muted: it matters when it is nearly full,
+   and shouting about it the rest of the time trains you to ignore it. */
+#status-context {
+    width: auto;
+    color: $text-muted;
 }
 
 #status-cost {
@@ -26,32 +47,67 @@
     color: $text-muted;
 }
 
+/* ── layout ─────────────────────────────────────────────────── */
+
+#body {
+    height: 1fr;
+}
+
+#main-column {
+    width: 1fr;
+    height: 1fr;
+}
+
+/* ── transcript ─────────────────────────────────────────────── */
+
 #transcript {
     height: 1fr;
-    padding: 0 1;
+    padding: 1 2;
     background: $surface;
     scrollbar-size-vertical: 1;
+    scrollbar-background: $surface;
+    scrollbar-color: $scrollbar;
+    scrollbar-color-hover: $scrollbar-hover;
+    scrollbar-color-active: $scrollbar-active;
 }
 
 #transcript > Static {
+    padding-left: 2;
     margin-bottom: 1;
 }
 
-#transcript > .notice {
+.banner {
     color: $accent;
+    padding-left: 0;
     margin-bottom: 1;
 }
 
-/* Tool calls are disclosure widgets: collapsed to one line by default so
-   verbose output never buries the model's reasoning. */
-.tool-entry {
-    border: none;
-    background: $boost;
-    margin-bottom: 1;
+/* The rails. Thick + accent for the human, thin + recessive for the agent, so
+   the eye can find "what did I ask?" while scrolling back. */
+.turn-user {
+    border-left: thick $rail-user;
+    color: $foreground;
+    text-style: bold;
 }
 
-.tool-entry CollapsibleTitle {
-    color: $success;
+.turn-assistant {
+    border-left: solid $rail-assistant;
+    color: $foreground;
+}
+
+.turn-meta {
+    border-left: solid $rail-assistant;
+    color: $text-muted;
+}
+
+.turn-error {
+    border-left: thick $error;
+    color: $error;
+}
+
+.notice {
+    color: $text-muted;
+    border-left: solid $rail-assistant;
 }
 
 /* Dimmed by /find rather than hidden: a transcript is a causal record, and
@@ -60,41 +116,209 @@
     opacity: 35%;
 }
 
-/* The task panel takes only the height it needs and disappears entirely when
-   the list is empty, so short runs pay nothing for it. */
+/* Select mode (v/V/j/k/y). Background rather than a border, so selecting an
+   entry never fights with the rail that says who produced it. */
+.selected {
+    background: $accent 18%;
+}
+
+.cursor {
+    background: $accent 32%;
+    text-style: bold;
+}
+
+/* ── code blocks ────────────────────────────────────────────── */
+
+/* Fenced code is its own widget so it can carry a copy button, and so the
+   button copies the *source* rather than the rendered, wrapped, escape-coded
+   version you would get from selecting it on screen. */
+CodeBlock {
+    height: auto;
+    background: $panel;
+    border-left: solid $rail-assistant;
+    margin-bottom: 1;
+    padding: 0 1;
+}
+
+.code-bar {
+    height: 1;
+    background: $panel;
+}
+
+.code-lang {
+    width: 1fr;
+    color: $text-muted;
+    padding-left: 1;
+}
+
+.code-copy {
+    width: auto;
+    min-width: 8;
+    height: 1;
+    border: none;
+    background: $panel;
+    color: $accent;
+}
+
+.code-copy:hover {
+    background: $accent 25%;
+}
+
+.code-body {
+    padding: 0 1;
+    background: $panel;
+}
+
+/* Long answers stay readable but foldable, so scrollback never becomes one
+   wall of text. */
+.long-entry {
+    border: none;
+    border-left: solid $rail-assistant;
+    background: $surface;
+    margin-bottom: 1;
+    padding-left: 1;
+}
+
+.long-entry CollapsibleTitle {
+    color: $foreground;
+}
+
+/* Tool calls are disclosure widgets: collapsed to one line by default so
+   verbose output never buries the model's reasoning. */
+.tool-entry {
+    border: none;
+    border-left: solid $rail-assistant;
+    background: $surface;
+    margin-bottom: 1;
+    padding-left: 1;
+}
+
+.tool-entry CollapsibleTitle {
+    color: $success;
+}
+
+.tool-entry Contents {
+    color: $text-muted;
+    padding-left: 2;
+}
+
+/* ── task panel ─────────────────────────────────────────────── */
+
+/* Takes only the height it needs and disappears when the list is empty, so
+   short runs pay nothing for it. */
 #todos {
     dock: bottom;
     height: auto;
     max-height: 10;
-    padding: 0 1;
+    padding: 0 2;
     background: $panel;
-    border-top: solid $accent;
+    border-top: solid $border;
+    color: $foreground;
 }
+
+/* ── prompt ─────────────────────────────────────────────────── */
 
 #prompt {
     dock: bottom;
     height: auto;
     max-height: 12;
-    border: tall $accent;
+    padding: 0 1;
+    border: round $border;
     background: $surface;
+    color: $foreground;
 }
 
 #prompt:focus {
-    border: tall $accent-lighten-1;
+    border: round $accent;
+}
+
+/* The completion popup, docked above the prompt. It opens on its own as you
+   type `@` or `/` — waiting for tab to reveal a list nobody knew existed was
+   why "@ completion doesn't work". */
+#completions {
+    dock: bottom;
+    height: auto;
+    max-height: 10;
+    margin: 0 1;
+    padding: 0;
+    border: round $accent;
+    background: $panel;
+    color: $foreground;
+    scrollbar-size-vertical: 1;
+}
+
+#completions > .option-list--option-highlighted {
+    background: $accent 25%;
+    color: $accent;
+    text-style: bold;
 }
 
 #hints {
     dock: bottom;
     height: auto;
     max-height: 1;
-    padding: 0 1;
+    padding: 0 2;
     color: $text-muted;
-    background: $panel;
+    background: $background;
 }
+
+Footer {
+    background: $panel;
+    color: $text-muted;
+}
+
+/* ── setup wizard ───────────────────────────────────────────── */
+
+SetupScreen {
+    align: center middle;
+    background: $background 70%;
+}
+
+#setup-body {
+    width: 72;
+    max-width: 90%;
+    height: auto;
+    max-height: 80%;
+    padding: 1 2;
+    border: round $accent;
+    background: $surface;
+}
+
+#setup-title {
+    color: $accent;
+    text-style: bold;
+    padding-bottom: 1;
+}
+
+#setup-hint {
+    color: $text-muted;
+    padding-bottom: 1;
+}
+
+#setup-options {
+    height: auto;
+    max-height: 16;
+    background: $surface;
+    border: none;
+    color: $foreground;
+}
+
+#setup-options > .option-list--option-highlighted {
+    background: $accent 20%;
+    color: $accent;
+    text-style: bold;
+}
+
+#setup-model-input {
+    border: round $border;
+    background: $surface;
+}
+
+/* ── approval modal ─────────────────────────────────────────── */
 
 ConfirmScreen {
     align: center middle;
-    background: $background 60%;
+    background: $background 70%;
 }
 
 #confirm-body {
@@ -103,7 +327,7 @@ ConfirmScreen {
     height: auto;
     max-height: 80%;
     padding: 1 2;
-    border: thick $warning;
+    border: round $warning;
     background: $surface;
 }
 
@@ -126,6 +350,140 @@ ConfirmScreen {
 }
 
 #confirm-keys {
+    padding-top: 1;
+    text-align: center;
+    color: $text-muted;
+}
+
+/* ── sidebar (ctrl+b) ───────────────────────────────────────── */
+
+/* Hidden on startup: an empty pane is just lost width. */
+#sidebar {
+    width: 42;
+    max-width: 45%;
+    height: 1fr;
+    background: $panel;
+    border-left: solid $border;
+}
+
+#sidebar-body {
+    height: 1fr;
+    padding: 0 1;
+    scrollbar-size-vertical: 1;
+    scrollbar-background: $panel;
+    scrollbar-color: $scrollbar;
+}
+
+.sidebar-heading {
+    color: $accent;
+    text-style: bold;
+    padding: 1 0 0 0;
+}
+
+#changed-tree, #repo-tree {
+    height: auto;
+    max-height: 30;
+    background: $panel;
+    color: $foreground;
+}
+
+#changed-tree > .tree--cursor, #repo-tree > .tree--cursor {
+    background: $accent 30%;
+    color: $foreground;
+}
+
+#repo-section {
+    border: none;
+    background: $panel;
+    padding: 0;
+}
+
+#repo-section CollapsibleTitle {
+    color: $text-muted;
+}
+
+/* ── fuzzy pickers (ctrl+r, /prompt) ────────────────────────── */
+
+FuzzyPicker {
+    align: center middle;
+    background: $background 70%;
+}
+
+#picker-body {
+    width: 84;
+    max-width: 90%;
+    height: auto;
+    max-height: 70%;
+    padding: 1 2;
+    border: round $accent;
+    background: $surface;
+}
+
+#picker-title {
+    color: $accent;
+    text-style: bold;
+    padding-bottom: 1;
+}
+
+#picker-input {
+    border: round $border;
+    background: $surface;
+    color: $foreground;
+}
+
+#picker-input:focus {
+    border: round $accent;
+}
+
+#picker-options {
+    height: auto;
+    max-height: 18;
+    background: $surface;
+    border: none;
+    color: $foreground;
+}
+
+#picker-options > .option-list--option-highlighted {
+    background: $accent 20%;
+    color: $accent;
+    text-style: bold;
+}
+
+/* ── shortcuts overlay (? and f1) ───────────────────────────── */
+
+HelpScreen {
+    align: center middle;
+    background: $background 75%;
+}
+
+#help-body {
+    width: 76;
+    max-width: 90%;
+    height: auto;
+    max-height: 85%;
+    padding: 1 2;
+    border: round $accent;
+    background: $surface;
+}
+
+#help-title {
+    color: $accent;
+    text-style: bold;
+    padding-bottom: 1;
+}
+
+.help-group {
+    color: $warning;
+    text-style: bold;
+    padding-top: 1;
+}
+
+.help-table {
+    color: $foreground;
+    padding-left: 1;
+}
+
+#help-footer {
     padding-top: 1;
     text-align: center;
 }

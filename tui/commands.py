@@ -20,6 +20,10 @@ from approval import ApprovalMode
 from config import ForgeConfig
 from tools.registry import ToolRegistry
 from tools.todo import TodoStore
+from tui.context import meter
+from tui.filetree import tree_lines
+from tui.templates import TEMPLATES_DIR, load_templates
+from tui.undo import UndoStack
 
 
 @dataclass(frozen=True)
@@ -37,6 +41,13 @@ class CommandContext:
     # the breakdown is accumulated by the surface from CostEvents.
     turn_costs: tuple[float, ...] = ()
     plan_mode: bool = False
+    # The write-snapshot stack behind `/undo` and `/files`.
+    undo: UndoStack | None = None
+    repo_root: Path | None = None
+    bell: bool = True
+    autocopy: bool = True
+    context_tokens: int = 0
+    context_budget: int = 0
 
 
 @dataclass(frozen=True)
@@ -53,6 +64,8 @@ class CommandResult:
     resume_id: str | None = None
     clear: bool = False
     toast: bool = False
+    setup: bool = False
+    cycle_theme: bool = False
     # Actions only the app can perform. Kept as data so dispatch stays pure and
     # every command is testable without a running app.
     rebuild: dict | None = None      # config overrides -> rebuild the agent
@@ -61,6 +74,14 @@ class CommandResult:
     copy: bool = False
     reindex: bool = False
     find: str | None = None
+    undo: bool = False
+    toggle_bell: bool = False
+    toggle_autocopy: bool = False
+    # Text to drop into the prompt box instead of sending. `/prompt <name>`
+    # fills the box so the template can be edited before it is submitted.
+    fill_prompt: str | None = None
+    pick_template: bool = False
+    pick_session: bool = False
 
 
 # name -> one-line help. The single source of truth for both `/help` and the
@@ -73,7 +94,7 @@ COMMANDS: dict[str, str] = {
     "/stats": "show cost and turn counts for this run",
     "/save": "checkpoint the session now",
     "/sessions": "list saved sessions",
-    "/resume": "resume a saved session: /resume <id>",
+    "/resume": "resume a saved session: /resume [id], or pick from a list",
     "/clear": "clear the transcript (the session is untouched)",
     "/keys": "show keyboard shortcuts",
     "/cost": "per-turn spend breakdown for this run",
@@ -86,6 +107,16 @@ COMMANDS: dict[str, str] = {
     "/copy": "copy the transcript to the clipboard",
     "/find": "highlight matching transcript entries: /find <text>",
     "/reindex": "rebuild the @file completion index",
+    "/undo": "revert the files the agent changed in its last turn",
+    "/redo": "put back what /undo reverted",
+    "/yolo": "approve every tool call for the rest of the session",
+    "/files": "show the files changed this session",
+    "/prompt": "insert a saved prompt: /prompt [name]",
+    "/context": "show how full the context window is",
+    "/bell": "toggle the notification bell on long runs",
+    "/autocopy": "toggle copying the moment you finish selecting",
+    "/setup": "choose a provider and model again",
+    "/theme": "switch between the forge themes",
     "/quit": "exit FORGE",
 }
 
@@ -95,16 +126,62 @@ COMMANDS: dict[str, str] = {
 PROVIDERS = ("anthropic", "openai", "groq", "openrouter", "gemini", "together")
 
 KEYS: dict[str, str] = {
-    "enter": "send the prompt",
-    "up / down": "walk back through what you have typed",
-    "tab": "accept the suggested command",
-    "escape": "interrupt the running agent",
+    # Prompt
+    "enter": "send the prompt, or take the highlighted completion",
+    "ctrl+j": "newline without sending — works in every terminal",
+    "shift+enter": "newline, if your terminal can send it (many cannot)",
+    "alt+enter": "newline, another terminal-dependent alias",
+    "up / down": "walk the completion menu, or your prompt history",
+    "tab": "accept the suggested command or @file",
+    "ctrl+r": "fuzzy-search everything you have typed",
+    # Transcript
+    "pgup / pgdn": "scroll the transcript",
+    "v": "select the entry under the cursor",
+    "V": "pin the anchor, so j/k grow the selection",
+    "j / k": "move the selection",
+    "y": "yank the selected entries",
+    "c": "copy the mouse selection, or the entry under the cursor",
+    "C": "copy the last code block",
+    "u": "undo the agent's last batch of file changes",
+    # Panels
+    "ctrl+b": "show what the agent changed",
+    "ctrl+s": "choose a provider and model",
+    "f1": "this list",
+    "?": "this list (from the transcript)",
+    # Run control
+    "escape": "interrupt the agent, or leave select mode",
+    "ctrl+c": "copy the selection · interrupt · quit when idle",
     "ctrl+l": "clear the transcript",
     "ctrl+t": "switch theme",
     "ctrl+p": "command palette",
-    "ctrl+c": "interrupt, or quit when idle",
-    "pgup / pgdn": "scroll the transcript",
+    "ctrl+d": "quit",
 }
+
+# Which section of the `?` overlay each key belongs to. `/keys` prints KEYS flat;
+# the overlay groups it, and a test asserts the two never drift apart.
+KEY_GROUPS: dict[str, tuple[str, ...]] = {
+    "Prompt": (
+        "enter",
+        "ctrl+j",
+        "shift+enter",
+        "alt+enter",
+        "up / down",
+        "tab",
+        "ctrl+r",
+    ),
+    "Transcript": ("pgup / pgdn", "v", "V", "j / k", "y", "c", "C", "u"),
+    "Panels": ("ctrl+b", "ctrl+s", "f1", "?"),
+    "Run": ("escape", "ctrl+c", "ctrl+l", "ctrl+t", "ctrl+p", "ctrl+d"),
+}
+
+# Not keys, so they stay out of the "is this actually bound?" test — but the
+# first one is the most useful thing in the app and nothing else advertises it.
+MOUSE_TIPS: tuple[tuple[str, str], ...] = (
+    ("drag", "select text — it copies as soon as you let go (/autocopy)"),
+    ("shift+drag", "hand selection to the terminal itself, bypassing FORGE"),
+    ("click", "fold or unfold a tool call"),
+    ("scroll", "move through the transcript"),
+)
 
 
 def _help() -> str:
@@ -247,9 +324,111 @@ def _find(arg: str) -> CommandResult:
     return CommandResult(f"highlighting {arg!r}", find=arg)
 
 
+def _undo(ctx: CommandContext) -> CommandResult:
+    """Revert the last turn's writes.
+
+    The work happens here rather than in the app for the same reason `/save`
+    does: dispatch is free of *UI*, not of I/O, and a command that touches the
+    filesystem is far easier to test as a function than as a keypress.
+    """
+    if ctx.undo is None:
+        return CommandResult("undo is not available")
+    result = ctx.undo.undo_last()
+    return CommandResult(result.summary(), undo=True, toast=result.changed > 0)
+
+
+def _redo(ctx: CommandContext) -> CommandResult:
+    if ctx.undo is None:
+        return CommandResult("redo is not available")
+    result = ctx.undo.redo_last()
+    return CommandResult(
+        result.summary("nothing to redo"), undo=True, toast=result.changed > 0
+    )
+
+
+def _files(ctx: CommandContext) -> str:
+    if ctx.undo is None or ctx.repo_root is None:
+        return "no file history available"
+    touched = ctx.undo.touched()
+    if not touched:
+        return "the agent has not changed any files this session"
+    lines = tree_lines(touched, ctx.repo_root)
+    plural = "" if len(touched) == 1 else "s"
+    return f"{len(touched)} file{plural} changed:\n" + "\n".join(lines)
+
+
+def _context(ctx: CommandContext) -> str:
+    used, budget = ctx.context_tokens, ctx.context_budget
+    if budget <= 0:
+        return f"~{used:,} tokens in context (no budget configured)"
+    return (
+        f"  {meter(used, budget, width=24)}\n"
+        f"  ~{used:,} of {budget:,} tokens\n"
+        f"  the agent compacts automatically as this fills; /compact forces it"
+    )
+
+
+def _prompt(arg: str, ctx: CommandContext) -> CommandResult:
+    templates = load_templates(TEMPLATES_DIR)
+    if not templates:
+        return CommandResult(
+            f"no saved prompts — put markdown files in {TEMPLATES_DIR}"
+        )
+    if not arg:
+        return CommandResult("", pick_template=True)
+    if arg not in templates:
+        return CommandResult(
+            f"unknown prompt {arg!r} — have: {', '.join(sorted(templates))}"
+        )
+    # Filled into the box rather than sent, so it can be edited first. A
+    # template is a starting point; sending it verbatim is rarely what you want.
+    return CommandResult("", fill_prompt=templates[arg])
+
+
+def _bell(ctx: CommandContext) -> CommandResult:
+    state = "off" if ctx.bell else "on"
+    return CommandResult(f"notification bell {state}", toggle_bell=True, toast=True)
+
+
+def _autocopy(ctx: CommandContext) -> CommandResult:
+    """Selecting with the mouse copies immediately, as a terminal does.
+
+    Toggleable because it is one toast per drag, which is the right trade when
+    you are copying and the wrong one when you are just highlighting to read.
+    """
+    state = "off" if ctx.autocopy else "on"
+    return CommandResult(
+        f"copy-on-select {state}"
+        + ("" if ctx.autocopy else " — drag to copy, no ctrl+c needed"),
+        toggle_autocopy=True,
+        toast=True,
+    )
+
+
+def _yolo(ctx: CommandContext) -> CommandResult:
+    """Approve everything for the rest of the session.
+
+    Named for what people actually call it. It is a real mode, not a joke: an
+    agent working through a long refactor in a scratch checkout should not stop
+    forty times. The warning is part of the output because the danger checks
+    stop applying too.
+    """
+    if ctx.config.approval_mode is ApprovalMode.AUTO:
+        return CommandResult("already in auto-approve mode")
+    return CommandResult(
+        "auto-approve ON — every tool call runs without asking, including "
+        "flagged ones. /approval on-request puts the guard rails back.",
+        rebuild={"approval_mode": ApprovalMode.AUTO.value},
+    )
+
+
 def _resume(arg: str, sessions_dir: Path) -> CommandResult:
     if not arg:
-        return CommandResult("usage: /resume <id>  (see /sessions)")
+        # No id: offer a picker rather than making the user run /sessions,
+        # read an id off the screen, and type it back in.
+        if not persistence.list_sessions(sessions_dir):
+            return CommandResult("no saved sessions")
+        return CommandResult("", pick_session=True)
     try:
         session = persistence.load(arg, sessions_dir)
     except (OSError, ValueError) as exc:
@@ -314,6 +493,26 @@ def dispatch(line: str, ctx: CommandContext) -> CommandResult | None:
             return _find(arg)
         case "/reindex":
             return CommandResult("rebuilding @file index...", reindex=True)
+        case "/undo":
+            return _undo(ctx)
+        case "/redo":
+            return _redo(ctx)
+        case "/yolo":
+            return _yolo(ctx)
+        case "/files":
+            return CommandResult(_files(ctx))
+        case "/prompt":
+            return _prompt(arg, ctx)
+        case "/context":
+            return CommandResult(_context(ctx))
+        case "/bell":
+            return _bell(ctx)
+        case "/autocopy":
+            return _autocopy(ctx)
+        case "/setup":
+            return CommandResult("", setup=True)
+        case "/theme":
+            return CommandResult("", cycle_theme=True)
         case "/quit":
             return CommandResult("bye", quit=True)
         case _:

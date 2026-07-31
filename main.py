@@ -98,6 +98,7 @@ def build_composition(
     *,
     approver: Approver,
     todos: TodoStore | None = None,
+    hooks: Hooks | None = None,
 ) -> Composition:
     """Build the client, tools, agent and session from argv + config.
 
@@ -107,8 +108,14 @@ def build_composition(
 
     `todos` is injectable so a rebuild (switching model mid-task) keeps the task
     list the agent has already populated.
+
+    `hooks` is the Phase-2 lifecycle seam, finally carrying something: the TUI
+    passes an `UndoStack`'s hooks so `before_tool` can snapshot a file before
+    the agent overwrites it. Default `Hooks()` is all no-ops, so the CLI path is
+    unchanged.
     """
     todo_store = todos if todos is not None else TodoStore()
+    tool_hooks = hooks if hooks is not None else Hooks()
     sessions_dir = persistence.default_sessions_dir()
 
     # Resume: load the saved session. Its provider/model/goal drive the run so it
@@ -130,7 +137,8 @@ def build_composition(
     cli_overrides = {
         k: v
         for k, v in vars(args).items()
-        if k not in ("goal", "gateway_url", "resume", "list_sessions", "tui")
+        if k
+        not in ("goal", "gateway_url", "resume", "list_sessions", "tui", "setup")
         and v is not None
     }
     config = load_config(cli_overrides)
@@ -176,7 +184,7 @@ def build_composition(
             policy=PolicyEngine(config.approval_mode),
             approver=approver,
             repo_root=repo_root,
-            hooks=Hooks(),
+            hooks=tool_hooks,
         )
 
     registry = build_registry(config, todo_store=todo_store)
@@ -193,7 +201,7 @@ def build_composition(
         policy=PolicyEngine(config.approval_mode),
         approver=approver,
         repo_root=repo_root,
-        hooks=Hooks(),
+        hooks=tool_hooks,
     )
 
     # The session we auto-checkpoint after every turn (crash-recoverable).
@@ -305,6 +313,12 @@ def main() -> None:
         action="store_true",
         help="run the full-screen terminal UI instead of the plain renderer",
     )
+    parser.add_argument(
+        "--setup",
+        dest="setup",
+        action="store_true",
+        help="re-run the provider/model chooser in the TUI",
+    )
     args = parser.parse_args()
 
     if args.list_sessions:
@@ -315,7 +329,7 @@ def main() -> None:
     # A bare `forge` opens the TUI: with no goal on argv there is nothing for
     # the one-shot path to do, and an interactive surface is the useful default.
     # `forge "<goal>"` still runs one-shot through the plain renderer.
-    if args.tui or (args.resume is None and args.goal is None):
+    if args.tui or args.setup or (args.resume is None and args.goal is None):
         # Imported lazily so the one-shot path never pays Textual's import cost.
         from tui import ForgeApp
 

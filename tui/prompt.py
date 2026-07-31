@@ -25,13 +25,43 @@ from textual.widgets import TextArea
 from tui.commands import COMMANDS
 from tui.files import complete_mention, match_paths, split_mention
 
+_PAIRS = {"(": ")", "[": "]", "{": "}"}
+
+
+def is_incomplete(text: str) -> bool:
+    """True when `enter` should insert a newline instead of sending.
+
+    Deliberately narrow. Two signals only:
+
+    * an odd number of ``` fences — you are mid code block;
+    * the last non-space character is an opening bracket — you are mid
+      structure.
+
+    Counting *all* unbalanced brackets was the obvious implementation and is
+    wrong: "(see below" is ordinary prose, and a prompt that silently refuses to
+    send is far more annoying than one extra shift+enter. Quotes are ignored
+    entirely, because apostrophes make them useless as a signal.
+    """
+    if not text.strip():
+        return False
+    if text.count("```") % 2 == 1:
+        return True
+    stripped = text.rstrip()
+    return bool(stripped) and stripped[-1] in _PAIRS
+
 
 class PromptArea(TextArea):
     """Multi-line prompt that submits on enter."""
 
+    # shift+enter is listed first because it is what people try, but it is the
+    # least reliable: most terminals send an identical byte for enter and
+    # shift+enter, and only those implementing the Kitty keyboard protocol can
+    # tell them apart. ctrl+j sends U+000A directly and works everywhere, so it
+    # is the one documented in `/keys` as the fallback.
     BINDINGS = [
         Binding("shift+enter", "newline", "newline", show=False),
         Binding("ctrl+j", "newline", "newline", show=False),
+        Binding("alt+enter", "newline", "newline", show=False),
     ]
 
     class Submitted(Message):
@@ -52,10 +82,46 @@ class PromptArea(TextArea):
 
     # ------------------------------------------------------------------ keys
 
+    @property
+    def menu(self):
+        """The completion popup, if the app has one mounted."""
+        found = self.app.query("#completions") if self.is_mounted else None
+        return found.first() if found else None
+
     async def _on_key(self, event: events.Key) -> None:
+        menu = self.menu
+
+        # While the menu is open it owns the arrows and the accept keys — that
+        # is what makes it a menu rather than a list of hints you have to
+        # retype. Everything else still falls through to normal editing.
+        if menu is not None and menu.is_open:
+            if event.key in ("down", "up"):
+                event.prevent_default()
+                event.stop()
+                menu.move(1 if event.key == "down" else -1)
+                return
+            if event.key in ("enter", "tab"):
+                event.prevent_default()
+                event.stop()
+                chosen = menu.current
+                menu.hide()
+                if chosen is not None:
+                    self._apply_completion(chosen)
+                return
+            if event.key == "escape":
+                event.prevent_default()
+                event.stop()
+                menu.hide()
+                return
+
         if event.key == "enter":
             event.prevent_default()
             event.stop()
+            # Pasting a code block and hitting enter halfway through it should
+            # keep typing, not send half a fence to the model.
+            if is_incomplete(self.text):
+                self.action_newline()
+                return
             self._submit()
             return
         if event.key == "tab":
@@ -97,6 +163,34 @@ class PromptArea(TextArea):
 
     # ----------------------------------------------------------------- history
 
+    @property
+    def line_count(self) -> int:
+        return self.document.line_count
+
+    @property
+    def status(self) -> str:
+        """What the hint line says when there is nothing to complete.
+
+        The box does grow with content, but at one line tall it is
+        indistinguishable from a single-line input, so nobody discovers
+        shift+enter. Saying it is the whole fix.
+        """
+        if is_incomplete(self.text):
+            return " ⏎ continues (unclosed block) · shift+enter newline"
+        if self.line_count > 1:
+            return f" {self.line_count} lines · enter sends · shift+enter newline"
+        return " enter sends · shift+enter newline · @ file · / command · f1 keys"
+
+    @property
+    def past_prompts(self) -> list[str]:
+        """Everything submitted this session, oldest first. Read by ctrl+r.
+
+        NB: not `history` — `TextArea` already owns that name for its undo
+        stack, and shadowing it breaks the widget at construction. Check any new
+        public name here against `dir(TextArea)` first.
+        """
+        return list(self._history)
+
     def remember(self, line: str) -> None:
         """Record a submitted line. Consecutive duplicates collapse."""
         if line and (not self._history or self._history[-1] != line):
@@ -134,28 +228,52 @@ class PromptArea(TextArea):
         return self.document.get_line(row)[:column]
 
     def suggestions(self) -> list[str]:
-        """Candidates for the token under the caret, best first."""
+        """Candidates for the token under the caret, best first.
+
+        A token that already *is* a candidate returns nothing. Without that,
+        accepting a completion immediately re-opens the menu — the completed
+        text still matches itself — and you have to press escape to get rid of
+        a list offering you what you just chose.
+        """
         line = self._current_line
-        if split_mention(line) is not None:
-            return match_paths(line, self.file_index)
+        split = split_mention(line)
+        if split is not None:
+            _, partial = split
+            matches = match_paths(line, self.file_index)
+            return [] if partial in matches else matches
         token = line.strip()
         if token.startswith("/") and " " not in token:
-            return [c for c in sorted(COMMANDS) if c.startswith(token.lower())]
+            lowered = token.lower()
+            matches = [c for c in sorted(COMMANDS) if c.startswith(lowered)]
+            return [] if lowered in matches else matches
         return []
+
+    def _apply_completion(self, value: str) -> None:
+        """Swap the token under the caret for `value`.
+
+        A mention keeps whatever came before the `@`; a slash command occupies
+        the whole line by construction.
+        """
+        line = self._current_line
+        row, column = self.cursor_location
+        split = split_mention(line)
+        completed = f"{split[0]}@{value}" if split is not None else value
+        self.replace(completed, (row, 0), (row, column))
+        self.move_cursor((row, len(completed)))
 
     def _complete(self) -> bool:
         """Replace the token under the caret with its best match."""
         line = self._current_line
-        row, column = self.cursor_location
 
         completed = complete_mention(line, self.file_index)
-        if completed is None:
-            matches = self.suggestions()
-            if not matches or split_mention(line) is not None:
-                return False
-            # A slash command occupies the whole line by construction.
-            completed = matches[0]
+        if completed is not None:
+            row, column = self.cursor_location
+            self.replace(completed, (row, 0), (row, column))
+            self.move_cursor((row, len(completed)))
+            return True
 
-        self.replace(completed, (row, 0), (row, column))
-        self.move_cursor((row, len(completed)))
+        matches = self.suggestions()
+        if not matches or split_mention(line) is not None:
+            return False
+        self._apply_completion(matches[0])
         return True

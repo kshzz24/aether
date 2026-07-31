@@ -3,6 +3,10 @@
 venv/
 env/
 ENV/
+# A second, Linux venv for running from WSL against the same working tree.
+# The Windows .venv holds .exe launchers Linux cannot execute, so the two
+# cannot be shared.
+.venv-linux/
 
 # Python
 __pycache__/

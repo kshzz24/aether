@@ -8,6 +8,12 @@ core change was needed to make this work — that seam was built for exactly thi
 `push_screen_wait` must be awaited from a worker context. It is: `decide()` is
 called from inside `agent.run`, which the app drives as a Textual worker. Await
 it from the main event loop instead and the app deadlocks.
+
+**`a` (always) lives here, not in the core.** `Decision` carries only
+`approved` and `reason`, so "remember this" cannot be expressed in the value the
+agent receives — and it shouldn't be. Whether a human wants to stop being asked
+is a property of this session at this surface, so the approver holds it and the
+agent keeps asking exactly as it always did.
 """
 
 from __future__ import annotations
@@ -27,6 +33,9 @@ if TYPE_CHECKING:
     from textual.app import App
 
 _MAX_DIFF_LINES = 40
+
+# (decision, remember-this-tool-for-the-session)
+ConfirmOutcome = tuple[Decision, bool]
 
 
 def _format_args(arguments: dict) -> str:
@@ -48,11 +57,12 @@ def _clip_diff(diff: str) -> str:
     return "\n".join(kept)
 
 
-class ConfirmScreen(ModalScreen[Decision]):
+class ConfirmScreen(ModalScreen[ConfirmOutcome]):
     """Asks the human; dismisses with the Decision the agent loop is awaiting."""
 
     BINDINGS = [
         ("y", "approve", "allow"),
+        ("a", "always", "always"),
         ("n", "deny", "deny"),
         ("escape", "deny", "deny"),
     ]
@@ -60,6 +70,16 @@ class ConfirmScreen(ModalScreen[Decision]):
     def __init__(self, request: ApprovalRequest) -> None:
         super().__init__()
         self._request = request
+
+    @property
+    def offers_always(self) -> bool:
+        """`a` is withheld from flagged calls.
+
+        Letting someone silence the prompt for a tool call that tripped a danger
+        check would disarm the check for the rest of the session — the one case
+        where being asked every time is the entire point.
+        """
+        return not self._request.danger_reasons
 
     def compose(self) -> ComposeResult:
         req = self._request
@@ -79,19 +99,29 @@ class ConfirmScreen(ModalScreen[Decision]):
                     Syntax(_clip_diff(req.diff), "diff", theme="ansi_dark"),
                     id="confirm-diff",
                 )
-            yield Static(
-                Text.assemble(
-                    ("  y  ", "bold green"), "allow      ",
-                    ("  n  ", "bold red"), "deny",
-                ),
-                id="confirm-keys",
-            )
+
+            keys = Text.assemble(("  y  ", "bold green"), "allow      ")
+            if self.offers_always:
+                keys.append_text(
+                    Text.assemble(
+                        ("  a  ", "bold green"),
+                        f"always {req.tool_name}      ",
+                    )
+                )
+            keys.append_text(Text.assemble(("  n  ", "bold red"), "deny"))
+            yield Static(keys, id="confirm-keys")
 
     def action_approve(self) -> None:
-        self.dismiss(Decision(approved=True))
+        self.dismiss((Decision(approved=True), False))
+
+    def action_always(self) -> None:
+        if not self.offers_always:
+            self.app.bell()
+            return
+        self.dismiss((Decision(approved=True), True))
 
     def action_deny(self) -> None:
-        self.dismiss(Decision(approved=False, reason="user declined"))
+        self.dismiss((Decision(approved=False, reason="user declined"), False))
 
 
 class TuiApprover:
@@ -99,6 +129,25 @@ class TuiApprover:
 
     def __init__(self, app: App) -> None:
         self._app = app
+        # Tools the human said "always" to, for this session only. Never
+        # persisted: an approval that outlives the session you granted it in is
+        # a policy change disguised as a keystroke.
+        self._always: set[str] = set()
+
+    @property
+    def always_allowed(self) -> frozenset[str]:
+        return frozenset(self._always)
+
+    def reset(self) -> None:
+        self._always.clear()
 
     async def decide(self, request: ApprovalRequest) -> Decision:
-        return await self._app.push_screen_wait(ConfirmScreen(request))
+        # A remembered tool is still re-checked for danger: `a` was granted on
+        # an ordinary call and must not cover a later flagged one.
+        if request.tool_name in self._always and not request.danger_reasons:
+            return Decision(approved=True, reason="always allowed this session")
+
+        decision, remember = await self._app.push_screen_wait(ConfirmScreen(request))
+        if remember:
+            self._always.add(request.tool_name)
+        return decision
