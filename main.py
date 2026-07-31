@@ -10,22 +10,26 @@ import asyncio
 import os
 import sys
 import tomllib
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 import persistence
 from agent import Agent
+from approval import Approver
 from cli.approver import CliApprover
 from cli.renderer import Renderer
-from client import make_client
-from config import load_config
+from client import Message, make_client
+from config import ForgeConfig, load_config
 from events import StatusEvent, TerminalEvent
 from gateway.client import GatewayClient
 from policy import PolicyEngine
 from skills import build_skill_registry, build_skill_tool, render_skill_menu
 from tools import build_registry
 from tools.hooks import Hooks
+from tools.registry import ToolRegistry
 from tools.subagent import build_subagent_tool
+from tools.todo import TodoStore
 from traversal import find_repo_root
 
 # Per-token (USD) pricing as (input_rate, output_rate). $/token = $/Mtok / 1e6.
@@ -56,9 +60,56 @@ SYSTEM = (
 BUILTIN_SKILLS_DIR = Path(__file__).resolve().parent / "skills" / "builtin"
 
 
-async def _run(args: argparse.Namespace) -> None:
+class CompositionError(Exception):
+    """The world could not be built (e.g. an unreadable --resume id)."""
+
+
+@dataclass(frozen=True)
+class Composition:
+    """Everything a surface needs to drive a run.
+
+    `build_composition` produces this; the CLI and the TUI each consume it and
+    differ only in *how* they drive `agent.run` and where events are rendered.
+    That split is what lets two surfaces share one core (Phase 7).
+    """
+
+    agent: Agent
+    registry: ToolRegistry
+    config: ForgeConfig
+    session: persistence.Session
+    sessions_dir: Path
+    goal: str | None
+    history: list[Message] | None
+    # The agent's scratch task list. Held here so a surface can observe the same
+    # store the `todo` tool writes to, without the agent core knowing.
+    todos: TodoStore
+
+
+def checkpoint(comp: Composition) -> None:
+    """Snapshot resumable run state to disk. Shared by every surface."""
+    comp.session.messages = comp.agent.messages
+    comp.session.total_cost = comp.agent.total_cost
+    comp.session.updated_at = datetime.now().isoformat(timespec="seconds")
+    persistence.save(comp.session, comp.sessions_dir)
+
+
+def build_composition(
+    args: argparse.Namespace,
+    *,
+    approver: Approver,
+    todos: TodoStore | None = None,
+) -> Composition:
+    """Build the client, tools, agent and session from argv + config.
+
+    The approver is injected rather than constructed here: the CLI supplies a
+    `CliApprover`, the TUI a `TuiApprover` bound to its app. That parameter is
+    the seam this whole phase turns on.
+
+    `todos` is injectable so a rebuild (switching model mid-task) keeps the task
+    list the agent has already populated.
+    """
+    todo_store = todos if todos is not None else TodoStore()
     sessions_dir = persistence.default_sessions_dir()
-    renderer = Renderer()
 
     # Resume: load the saved session. Its provider/model/goal drive the run so it
     # continues faithfully; the saved messages seed the loop as history.
@@ -67,8 +118,7 @@ async def _run(args: argparse.Namespace) -> None:
         try:
             resume_session = persistence.load(args.resume, sessions_dir)
         except (OSError, ValueError) as exc:
-            renderer.notice(f"cannot resume {args.resume!r}: {exc}")
-            return
+            raise CompositionError(f"cannot resume {args.resume!r}: {exc}") from exc
 
     # gateway_url is a composition-root concern, not validated config: ForgeConfig
     # uses extra="forbid", so pull it out before the merge. (For .forge/config.toml
@@ -80,7 +130,8 @@ async def _run(args: argparse.Namespace) -> None:
     cli_overrides = {
         k: v
         for k, v in vars(args).items()
-        if k not in ("goal", "gateway_url", "resume", "list_sessions") and v is not None
+        if k not in ("goal", "gateway_url", "resume", "list_sessions", "tui")
+        and v is not None
     }
     config = load_config(cli_overrides)
 
@@ -110,9 +161,8 @@ async def _run(args: argparse.Namespace) -> None:
             fallback=client,
             rates=rates,
         )
-    approver = CliApprover()
     repo_root = find_repo_root(Path.cwd()) or Path.cwd()
-    child_registry = build_registry(config)
+    child_registry = build_registry(config, todo_store=todo_store)
     child_registry.register(skill_tool)
 
     def make_child() -> Agent:
@@ -129,7 +179,7 @@ async def _run(args: argparse.Namespace) -> None:
             hooks=Hooks(),
         )
 
-    registry = build_registry(config)
+    registry = build_registry(config, todo_store=todo_store)
     registry.register(build_subagent_tool(make_child=make_child))
     registry.register(skill_tool)
 
@@ -147,10 +197,11 @@ async def _run(args: argparse.Namespace) -> None:
     )
 
     # The session we auto-checkpoint after every turn (crash-recoverable).
+    # In the TUI there is no goal until the user types one, so it may be "".
     now = datetime.now().isoformat(timespec="seconds")
     session = resume_session or persistence.Session(
         id=persistence.new_session_id(),
-        goal=goal,
+        goal=goal or "",
         provider=provider,
         model=model,
         created_at=now,
@@ -158,18 +209,36 @@ async def _run(args: argparse.Namespace) -> None:
         total_cost=0.0,
         messages=[],
     )
-    renderer.notice(f"session {session.id}")
 
-    async for event in agent.run(goal, history=history):
+    return Composition(
+        agent=agent,
+        registry=registry,
+        config=config,
+        session=session,
+        sessions_dir=sessions_dir,
+        goal=goal,
+        history=history,
+        todos=todo_store,
+    )
+
+
+async def _run(args: argparse.Namespace) -> None:
+    renderer = Renderer()
+    try:
+        comp = build_composition(args, approver=CliApprover())
+    except CompositionError as exc:
+        renderer.notice(str(exc))
+        return
+
+    renderer.notice(f"session {comp.session.id}")
+
+    async for event in comp.agent.run(comp.goal, history=comp.history):
         renderer.render(event)
         # StatusEvent fires at each turn's start (state complete through the prior
         # turn); TerminalEvent at the end. Snapshot on both — a crash loses at
         # most the in-flight turn.
         if isinstance(event, (StatusEvent, TerminalEvent)):
-            session.messages = agent.messages
-            session.total_cost = agent.total_cost
-            session.updated_at = datetime.now().isoformat(timespec="seconds")
-            persistence.save(session, sessions_dir)
+            checkpoint(comp)
 
 
 def main() -> None:
@@ -188,7 +257,7 @@ def main() -> None:
         "goal",
         nargs="?",
         default=None,
-        help="the task for the agent (omit with --resume / --list-sessions)",
+        help="the task for the agent; omit it to open the interactive TUI",
     )
     # default=None so unset flags fall through to file/default config layers.
     parser.add_argument("--provider", default=None, help="LLM provider")
@@ -230,6 +299,12 @@ def main() -> None:
         action="store_true",
         help="list saved sessions and exit",
     )
+    parser.add_argument(
+        "--tui",
+        dest="tui",
+        action="store_true",
+        help="run the full-screen terminal UI instead of the plain renderer",
+    )
     args = parser.parse_args()
 
     if args.list_sessions:
@@ -237,8 +312,15 @@ def main() -> None:
         Renderer().sessions(metas)
         return
 
-    if args.resume is None and args.goal is None:
-        parser.error("a goal is required (or use --resume <id> / --list-sessions)")
+    # A bare `forge` opens the TUI: with no goal on argv there is nothing for
+    # the one-shot path to do, and an interactive surface is the useful default.
+    # `forge "<goal>"` still runs one-shot through the plain renderer.
+    if args.tui or (args.resume is None and args.goal is None):
+        # Imported lazily so the one-shot path never pays Textual's import cost.
+        from tui import ForgeApp
+
+        ForgeApp(args).run()
+        return
 
     asyncio.run(_run(args))
 

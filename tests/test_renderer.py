@@ -18,50 +18,16 @@ upgrade on top of this; this is the floor.
 
 from typing import get_args
 
+from conftest import sample_events as _one_of_each
+
 from approval import Verdict
 from cli.renderer import Renderer
 from events import (
     ApprovalDecisionEvent,
-    ConfirmRequestEvent,
-    CostEvent,
     Event,
-    StatusEvent,
     SubagentEvent,
-    TerminalEvent,
-    TerminalReason,
-    TextEvent,
-    ToolCallEvent,
-    ToolResultEvent,
 )
 from tools.base import ToolKind
-
-
-def _one_of_each() -> list[Event]:
-    return [
-        StatusEvent(type="status", message="working"),
-        TextEvent(type="text", text="hello"),
-        ToolCallEvent(type="tool_call", name="run_shell", arguments={"cmd": "ls"}),
-        ToolResultEvent(type="tool_result", name="run_shell", result="ok"),
-        CostEvent(type="cost", cost_usd=0.01, total_cost_usd=0.02),
-        ConfirmRequestEvent(
-            tool_name="run_shell",
-            arguments={"cmd": "rm -rf /"},
-            reason="destructive shell command",
-        ),
-        TerminalEvent(reason=TerminalReason.COMPLETED, detail=""),
-        ApprovalDecisionEvent(
-            type="approval_decision",
-            tool_name="write_file",
-            kind=ToolKind.WRITE,
-            danger_reasons=[],
-            verdict=Verdict.AUTO_APPROVE,
-            approved=True,
-            source="policy",
-        ),
-        SubagentEvent(
-            type="subagent", task="explore the repo", phase="started",
-        ),
-    ]
 
 
 def test_sample_covers_every_event_in_union():

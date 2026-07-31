@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from gateway.breaker import BreakerOpen, CircuitBreaker, call_with_resilience
+from resilience import BreakerOpen, CircuitBreaker, call_with_resilience
 
 # --- state machine -----------------------------------------------------------
 

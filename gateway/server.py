@@ -9,13 +9,13 @@ from fastapi import FastAPI, HTTPException, Request
 
 from client import ToolCallingUnsupportedError, make_client
 from gateway import ledger
-from gateway.breaker import BreakerOpen, CircuitBreaker, call_with_resilience
 from gateway.cache import ExactCache, canonical_key, request_text
 from gateway.config import load_gateway_config
 from gateway.metrics import compute_stats
 from gateway.models import ChatCompletionRequest, ChatCompletionResponse
 from gateway.ratelimit import TokenBucket
 from gateway.translate import to_internal, to_wire
+from resilience import BreakerOpen, CircuitBreaker, call_with_resilience
 
 # from main import ENV_KEYS
 

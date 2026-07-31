@@ -74,7 +74,21 @@ os.environ["FORGE_LEDGER_DSN"] = _TEST_DSN
 
 import pytest  # noqa: E402
 
-from approval import ApprovalRequest, Decision  # noqa: E402
+from approval import ApprovalRequest, Decision, Verdict  # noqa: E402
+from events import (  # noqa: E402
+    ApprovalDecisionEvent,
+    ConfirmRequestEvent,
+    CostEvent,
+    Event,
+    StatusEvent,
+    SubagentEvent,
+    TerminalEvent,
+    TerminalReason,
+    TextEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+)
+from tools.base import ToolKind  # noqa: E402
 
 
 class ScriptedApprover:
@@ -92,3 +106,48 @@ class ScriptedApprover:
 @pytest.fixture
 def ScriptedApprover_():
     return ScriptedApprover
+
+
+class StubClient:
+    """A fake LLMClient that returns scripted responses, no network."""
+
+    def __init__(self, responses: list) -> None:
+        self._responses = list(responses)
+        self.received: list[list] = []  # snapshot of messages per create() call
+
+    async def create(self, messages, tools, system):
+        self.received.append(list(messages))  # copy: agent mutates the list
+        return self._responses.pop(0)
+
+
+def sample_events() -> list[Event]:
+    """One instance of every member of the `Event` union.
+
+    Shared by every surface that consumes the stream (`cli/renderer.py` and
+    `tui/transcript.py`). Adding a variant to the union without adding it here
+    fails `test_sample_covers_every_event_in_union`, which in turn forces both
+    surfaces to grow a branch for it. One list, two gates.
+    """
+    return [
+        StatusEvent(type="status", message="working"),
+        TextEvent(type="text", text="hello"),
+        ToolCallEvent(type="tool_call", name="run_shell", arguments={"cmd": "ls"}),
+        ToolResultEvent(type="tool_result", name="run_shell", result="ok"),
+        CostEvent(type="cost", cost_usd=0.01, total_cost_usd=0.02),
+        ConfirmRequestEvent(
+            tool_name="run_shell",
+            arguments={"cmd": "rm -rf /"},
+            reason="destructive shell command",
+        ),
+        TerminalEvent(reason=TerminalReason.COMPLETED, detail=""),
+        ApprovalDecisionEvent(
+            type="approval_decision",
+            tool_name="write_file",
+            kind=ToolKind.WRITE,
+            danger_reasons=[],
+            verdict=Verdict.AUTO_APPROVE,
+            approved=True,
+            source="policy",
+        ),
+        SubagentEvent(type="subagent", task="explore the repo", phase="started"),
+    ]
