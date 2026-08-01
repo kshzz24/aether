@@ -337,6 +337,9 @@ class ForgeApp(App):
         prompt.focus()
         self._reindex_files()
         self.set_interval(0.1, self._tick)
+        # In a worker, not inline: a stdio server may `npx`-download a package
+        # on first run, and the prompt must not be dead while that happens.
+        self.run_worker(self._connect_mcp(), group="mcp")
 
         if _needs_setup(self._args):
             self._open_setup()
@@ -385,6 +388,22 @@ class ForgeApp(App):
             self.query_one(TranscriptView).error(
                 f"{info.env_var} is not set — export it before sending a goal"
             )
+
+    async def _connect_mcp(self) -> None:
+        """Federate MCP tools into the registry, in the background.
+
+        Failures are already contained by the manager — a dead server shows up
+        in `/mcp` rather than stopping the session — so this only reports.
+        """
+        if self.comp is None or self.comp.mcp is None:
+            return
+        try:
+            summary = await composition_root.connect_mcp(self.comp)
+        except Exception as exc:  # noqa: BLE001
+            self.query_one(TranscriptView).notice(f"mcp: {_explain(exc)}")
+            return
+        if summary:
+            self.query_one(TranscriptView).notice(summary)
 
     def _reindex_files(self) -> None:
         self.query_one(PromptArea).file_index = build_file_index(
@@ -478,6 +497,7 @@ class ForgeApp(App):
             plan_mode=self._plan_mode,
             undo=self._undo,
             repo_root=self.comp.agent.repo_root,
+            mcp=self.comp.mcp,
             bell=self._bell_enabled,
             autocopy=self._autocopy,
             context_tokens=used,
@@ -775,6 +795,14 @@ class ForgeApp(App):
         transcript.preview(path, body, _LANGUAGES.get(path.suffix.lower(), "text"))
 
     # --------------------------------------------------------------- actions
+
+    async def on_unmount(self) -> None:
+        """Close MCP connections, and the subprocesses behind them.
+
+        Without this, every `forge` session leaves its stdio servers running.
+        """
+        if self.comp is not None and self.comp.mcp is not None:
+            await self.comp.mcp.aclose()
 
     def action_clear(self) -> None:
         self.query_one(TranscriptView).clear()

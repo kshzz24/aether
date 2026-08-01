@@ -44,6 +44,9 @@ class CommandContext:
     # The write-snapshot stack behind `/undo` and `/files`.
     undo: UndoStack | None = None
     repo_root: Path | None = None
+    # Connected MCP servers, for `/mcp`. Typed loosely so this module keeps its
+    # only dependency on the manager as "something that can render itself".
+    mcp: object | None = None
     bell: bool = True
     autocopy: bool = True
     context_tokens: int = 0
@@ -216,9 +219,13 @@ def _tools(registry: ToolRegistry) -> str:
     return f"{len(tools)} tools:\n" + "\n".join(lines)
 
 
-def _mcp() -> str:
-    # TODO(phase-6): replace with real per-server status once mcpclient lands.
-    return "no MCP servers connected (Phase 6 not built yet)"
+def _mcp(ctx: CommandContext) -> str:
+    if ctx.mcp is None:
+        return (
+            "no MCP servers configured\n"
+            "  add them to .mcp.json in this repo, or ~/.forge/.mcp.json"
+        )
+    return ctx.mcp.render()
 
 
 def _stats(ctx: CommandContext) -> str:
@@ -462,7 +469,7 @@ def dispatch(line: str, ctx: CommandContext) -> CommandResult | None:
         case "/tools":
             return CommandResult(_tools(ctx.registry))
         case "/mcp":
-            return CommandResult(_mcp())
+            return CommandResult(_mcp(ctx))
         case "/stats":
             return CommandResult(_stats(ctx))
         case "/keys":
