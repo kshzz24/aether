@@ -28,6 +28,21 @@ from tui.files import complete_mention, match_paths, split_mention
 _PAIRS = {"(": ")", "[": "]", "{": "}"}
 
 
+def wants_continuation(text: str) -> bool:
+    """True when the line ends in a backslash, shell-style.
+
+    This exists because `shift+enter` is not deliverable in most terminals. The
+    keystroke reaches the app as a plain `enter` — Textual can only name it
+    `shift+enter` when the terminal implements the Kitty keyboard protocol
+    (`_xterm_parser.py:392`), which Windows Terminal only does in recent
+    versions. Nothing in the application layer can recover the difference.
+
+    A trailing backslash needs no terminal support at all, and it is already the
+    line-continuation convention everyone using a shell knows.
+    """
+    return text.rstrip(" \t").endswith("\\")
+
+
 def is_incomplete(text: str) -> bool:
     """True when `enter` should insert a newline instead of sending.
 
@@ -117,6 +132,12 @@ class PromptArea(TextArea):
         if event.key == "enter":
             event.prevent_default()
             event.stop()
+            # A trailing backslash continues the line. The one newline gesture
+            # that works in every terminal, because it needs no key beyond the
+            # ones already arriving.
+            if wants_continuation(self.text):
+                self.action_continue_line()
+                return
             # Pasting a code block and hitting enter halfway through it should
             # keep typing, not send half a fence to the model.
             if is_incomplete(self.text):
@@ -143,6 +164,16 @@ class PromptArea(TextArea):
 
     def action_newline(self) -> None:
         self.insert("\n")
+
+    def action_continue_line(self) -> None:
+        """Drop the trailing backslash and open a new line.
+
+        The backslash is consumed rather than kept, exactly as a shell does —
+        it was punctuation asking for a newline, not part of the message.
+        """
+        kept = self.text.rstrip(" \t")[:-1].rstrip(" \t")
+        self.text = kept + "\n"
+        self.move_cursor(self.document.end)
 
     def _at_first_line(self) -> bool:
         return self.cursor_location[0] == 0
@@ -175,11 +206,13 @@ class PromptArea(TextArea):
         indistinguishable from a single-line input, so nobody discovers
         shift+enter. Saying it is the whole fix.
         """
+        if wants_continuation(self.text):
+            return " ⏎ opens a new line (trailing \\)"
         if is_incomplete(self.text):
-            return " ⏎ continues (unclosed block) · shift+enter newline"
+            return " ⏎ continues — unclosed block"
         if self.line_count > 1:
-            return f" {self.line_count} lines · enter sends · shift+enter newline"
-        return " enter sends · shift+enter newline · @ file · / command · f1 keys"
+            return f" {self.line_count} lines · enter sends · ctrl+j newline"
+        return " enter sends · ctrl+j or \\⏎ newline · @ file · / command · f1 keys"
 
     @property
     def past_prompts(self) -> list[str]:

@@ -84,6 +84,7 @@ from events import (  # noqa: E402
     SubagentEvent,
     TerminalEvent,
     TerminalReason,
+    TextDeltaEvent,
     TextEvent,
     ToolCallEvent,
     ToolResultEvent,
@@ -130,6 +131,7 @@ def sample_events() -> list[Event]:
     """
     return [
         StatusEvent(type="status", message="working"),
+        TextDeltaEvent(type="text_delta", text="hel"),
         TextEvent(type="text", text="hello"),
         ToolCallEvent(type="tool_call", name="run_shell", arguments={"cmd": "ls"}),
         ToolResultEvent(type="tool_result", name="run_shell", result="ok"),

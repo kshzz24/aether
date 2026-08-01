@@ -116,6 +116,13 @@ Screen {
     opacity: 35%;
 }
 
+/* The live streaming preview. Slightly muted against the finished answer that
+   replaces it, so it reads as "still arriving" rather than "done". */
+.streaming {
+    border-left: solid $rail-assistant;
+    color: $text-muted;
+}
+
 /* Select mode (v/V/j/k/y). Background rather than a border, so selecting an
    entry never fights with the rail that says who produced it. */
 .selected {
@@ -219,7 +226,6 @@ CodeBlock {
 /* ── prompt ─────────────────────────────────────────────────── */
 
 #prompt {
-    dock: bottom;
     height: auto;
     max-height: 12;
     padding: 0 1;
@@ -232,11 +238,21 @@ CodeBlock {
     border: round $accent;
 }
 
-/* The completion popup, docked above the prompt. It opens on its own as you
-   type `@` or `/` — waiting for tab to reveal a list nobody knew existed was
-   why "@ completion doesn't work". */
-#completions {
+/* ── the composer ───────────────────────────────────────────── */
+
+/* Menu + prompt + hint line, docked as ONE unit. Docking them separately made
+   all three land on the last row, so the prompt's bottom border was overdrawn
+   by the hints and the hints by the footer. A single auto-height container
+   stacks them properly and grows as one. */
+#composer {
     dock: bottom;
+    height: auto;
+}
+
+/* The completion popup, above the prompt. It opens on its own as you type `@`
+   or `/` — waiting for tab to reveal a list nobody knew existed was why
+   "@ completion doesn't work". */
+#completions {
     height: auto;
     max-height: 10;
     margin: 0 1;
@@ -253,10 +269,11 @@ CodeBlock {
     text-style: bold;
 }
 
+/* Exactly one row, never `auto`. An auto height here measured as zero during
+   arrangement and then drew on a row it had not been allocated — which is how
+   it ended up on top of the prompt's bottom border. */
 #hints {
-    dock: bottom;
-    height: auto;
-    max-height: 1;
+    height: 1;
     padding: 0 2;
     color: $text-muted;
     background: $background;
@@ -346,6 +363,23 @@ ConfirmScreen {
 }
 
 #confirm-diff {
+    padding-top: 1;
+}
+
+/* Hidden until `e`: most confirmations are one keypress, and a text box would
+   be in the way of them. */
+#confirm-edit {
+    margin-top: 1;
+    border: round $warning;
+    background: $surface;
+    color: $foreground;
+}
+
+#confirm-edit:focus {
+    border: round $accent;
+}
+
+#confirm-error {
     padding-top: 1;
 }
 

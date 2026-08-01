@@ -23,6 +23,7 @@ from events import (
     SubagentEvent,
     TerminalEvent,
     TerminalReason,
+    TextDeltaEvent,
     TextEvent,
     ToolCallEvent,
     ToolResultEvent,
@@ -100,10 +101,23 @@ class Agent:
         for _ in range(self.max_iterations):
             yield StatusEvent(type="status", message="thinking")
 
+            # Streaming is an *optional* client capability (`StreamingClient` in
+            # client.py), probed rather than required. A client without it —
+            # GatewayClient, a test double — takes the buffered path below and
+            # produces a byte-identical event sequence.
+            make_stream = getattr(self.client, "stream", None)
             try:
-                response = await self.client.create(
-                    messages=self.messages, tools=tools_schemas, system=self.system
-                )
+                if make_stream is None:
+                    response = await self.client.create(
+                        messages=self.messages, tools=tools_schemas, system=self.system
+                    )
+                else:
+                    turn = make_stream(
+                        messages=self.messages, tools=tools_schemas, system=self.system
+                    )
+                    async for delta in turn:
+                        yield TextDeltaEvent(type="text_delta", text=delta)
+                    response = turn.response
             except ToolCallingUnsupportedError as e:
                 yield TerminalEvent(reason=TerminalReason.ERROR, detail=str(e))
                 return
@@ -196,6 +210,35 @@ class Agent:
 
                             deny_reason = decision.reason or "user declined"
                             source = "human"
+
+                            # An edited call is a NEW call, and gets checked
+                            # like one. Trusting it because a human typed it
+                            # would make the approval prompt a bypass for the
+                            # schema, the danger checks and the path guard.
+                            if approved and decision.arguments is not None:
+                                block.arguments = decision.arguments
+                                try:
+                                    self.registry.validate_call(
+                                        block.name, block.arguments
+                                    )
+                                except Exception as e:
+                                    approved = False
+                                    deny_reason = f"edited call is invalid: {e}"
+                                else:
+                                    danger = []
+                                    if "command" in block.arguments:
+                                        danger += safety.dangerous_command(
+                                            block.arguments["command"]
+                                        )
+                                    danger += safety.path_escape(
+                                        block.arguments, repo_root=self.repo_root
+                                    )
+                                    if danger:
+                                        approved = False
+                                        deny_reason = (
+                                            "edited call was rejected: "
+                                            + "; ".join(danger)
+                                        )
                         else:
                             approved = verdict is Verdict.AUTO_APPROVE
                             source = "policy"

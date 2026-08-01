@@ -18,6 +18,7 @@ agent keeps asking exactly as it always did.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 from rich.syntax import Syntax
@@ -25,7 +26,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Static
+from textual.widgets import Input, Static
 
 from approval import ApprovalRequest, Decision
 
@@ -63,6 +64,7 @@ class ConfirmScreen(ModalScreen[ConfirmOutcome]):
     BINDINGS = [
         ("y", "approve", "allow"),
         ("a", "always", "always"),
+        ("e", "edit", "edit"),
         ("n", "deny", "deny"),
         ("escape", "deny", "deny"),
     ]
@@ -100,6 +102,9 @@ class ConfirmScreen(ModalScreen[ConfirmOutcome]):
                     id="confirm-diff",
                 )
 
+            yield Input(id="confirm-edit")
+            yield Static(Text(""), id="confirm-error")
+
             keys = Text.assemble(("  y  ", "bold green"), "allow      ")
             if self.offers_always:
                 keys.append_text(
@@ -108,8 +113,15 @@ class ConfirmScreen(ModalScreen[ConfirmOutcome]):
                         f"always {req.tool_name}      ",
                     )
                 )
+            keys.append_text(Text.assemble(("  e  ", "bold yellow"), "edit      "))
             keys.append_text(Text.assemble(("  n  ", "bold red"), "deny"))
             yield Static(keys, id="confirm-keys")
+
+    def on_mount(self) -> None:
+        # The editor is a second step, not the default view: most confirmations
+        # are a single keypress and a text box would be in the way.
+        self.query_one("#confirm-edit", Input).display = False
+        self.query_one("#confirm-error", Static).display = False
 
     def action_approve(self) -> None:
         self.dismiss((Decision(approved=True), False))
@@ -119,6 +131,36 @@ class ConfirmScreen(ModalScreen[ConfirmOutcome]):
             self.app.bell()
             return
         self.dismiss((Decision(approved=True), True))
+
+    def action_edit(self) -> None:
+        """Correct the call instead of denying it.
+
+        Denying makes the model guess again, which costs a turn and often
+        produces the same call. Editing is the shorter path — and the agent
+        re-validates and re-checks whatever comes back (`agent.py`), so this is
+        no more powerful than making the call yourself.
+        """
+        editor = self.query_one("#confirm-edit", Input)
+        editor.display = True
+        editor.value = json.dumps(self._request.arguments)
+        editor.focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        try:
+            arguments = json.loads(event.value)
+        except json.JSONDecodeError as exc:
+            self._complain(f"not valid JSON: {exc.msg}")
+            return
+        if not isinstance(arguments, dict):
+            self._complain("arguments must be a JSON object, e.g. {\"path\": \"a.py\"}")
+            return
+        self.dismiss((Decision(approved=True, arguments=arguments), False))
+
+    def _complain(self, message: str) -> None:
+        """Reject malformed input here rather than passing it to the agent."""
+        error = self.query_one("#confirm-error", Static)
+        error.display = True
+        error.update(Text(message, style="bold red"))
 
     def action_deny(self) -> None:
         self.dismiss((Decision(approved=False, reason="user declined"), False))

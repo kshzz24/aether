@@ -34,6 +34,14 @@ class ApprovalRequest:
 class Decision:
     approved: bool
     reason: str | None = None
+    # A corrected call, when the human edited it at the prompt rather than
+    # denying it outright. Optional and defaulting to None, so every existing
+    # approver keeps working untouched.
+    #
+    # The agent MUST re-validate and re-run the danger checks against these
+    # before dispatch. Without that, editing is a hole straight through both:
+    # approve a harmless `ls`, then edit it into `rm -rf /`.
+    arguments: dict | None = None
 
 
 @runtime_checkable

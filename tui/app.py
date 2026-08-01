@@ -298,11 +298,19 @@ class ForgeApp(App):
                     yield TodoPanel(self.comp.todos, id="todos")
             if self.comp is not None:
                 yield Sidebar(self.comp.agent.repo_root, id="sidebar")
-        # Before the prompt in compose order, so it docks *above* it.
-        yield CompletionMenu(id="completions")
-        yield PromptArea(id="prompt")
-        yield Label("", id="hints")
-        yield Footer()
+        # One docked container, not three docked siblings. Docking the menu,
+        # the prompt and the hint line separately made all three claim the same
+        # bottom row: the prompt's own bottom border got overdrawn by the hints,
+        # and the hints by the footer. Grouping them means the stack has a
+        # single `auto` height that grows as one.
+        with Vertical(id="composer"):
+            yield CompletionMenu(id="completions")
+            yield PromptArea(id="prompt")
+            yield Label("", id="hints")
+            # Inside the composer, not beside it: Footer carries its own
+            # `dock: bottom`, so as a sibling it docked to the *screen* and
+            # landed on the hint line rather than below it.
+            yield Footer()
 
     def on_mount(self) -> None:
         transcript = self.query_one(TranscriptView)

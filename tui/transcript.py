@@ -44,6 +44,7 @@ from events import (
     SubagentEvent,
     TerminalEvent,
     TerminalReason,
+    TextDeltaEvent,
     TextEvent,
     ToolCallEvent,
     ToolResultEvent,
@@ -123,6 +124,12 @@ def event_to_renderable(event: Event) -> RenderableType:
     match event:
         case StatusEvent(message=message):
             return Text(f"— {message}", style="dim italic")
+
+        case TextDeltaEvent(text=text):
+            # Plain, not Markdown: a half-arrived fence or list is not valid
+            # markdown, and re-parsing it on every keystroke would make the
+            # answer flicker between interpretations as it grows.
+            return Text(text)
 
         case TextEvent(text=text):
             # Models emit Markdown; rendering it raw is the single biggest
@@ -267,6 +274,10 @@ class TranscriptView(VerticalScroll):
         # The body of the tool entry currently awaiting its result, so a
         # ToolResultEvent lands inside the call that produced it.
         self._open_body: Static | None = None
+        # The live streaming preview, and the text accumulated into it. Both
+        # are discarded the moment the authoritative TextEvent arrives.
+        self._streaming: Static | None = None
+        self._stream_text = ""
         self._selecting = False
         # `v` moves a one-entry cursor; `V` pins the anchor so `j`/`k` grow the
         # range instead. Two distinct verbs, rather than vim's charwise/linewise
@@ -373,8 +384,34 @@ class TranscriptView(VerticalScroll):
                     else:
                         self._add(body)
 
+    def _stream_delta(self, text: str) -> None:
+        """Grow the live preview, creating it on the first fragment."""
+        self._stream_text += text
+        if self._streaming is None:
+            self._streaming = Static(Text(self._stream_text), classes="streaming")
+            self._add(self._streaming)
+            return
+        self._streaming.update(Text(self._stream_text))
+        if self.following:
+            self.scroll_end(animate=False)
+
+    def _end_stream(self) -> None:
+        """Drop the preview. The TextEvent that follows is the real render."""
+        if self._streaming is not None:
+            self._streaming.remove()
+            self._streaming = None
+        self._stream_text = ""
+
+    @property
+    def streaming_text(self) -> str:
+        """What the live preview currently shows. Empty when not streaming."""
+        return self._stream_text
+
     def append(self, event: Event) -> None:
         match event:
+            case TextDeltaEvent(text=text):
+                self._stream_delta(text)
+
             case ToolCallEvent(name=name, arguments=arguments):
                 # Collapsed by default: verbose tool output is available on
                 # demand instead of burying the model's reasoning.
@@ -399,9 +436,16 @@ class TranscriptView(VerticalScroll):
                     )
 
             case TextEvent(text=text):
+                # Replace, never append: the preview already showed these words
+                # as plain text, and this is the same answer rendered properly
+                # — markdown, syntax highlighting, code blocks with copy buttons.
+                self._end_stream()
                 self._add_model_text(text)
 
             case _:
+                # A tool call or a terminal event ends the streamed prose even
+                # when no TextEvent follows, so a preview is never left behind.
+                self._end_stream()
                 self._add(Static(event_to_renderable(event), classes="turn-meta"))
 
     def notice(self, text: str) -> None:
@@ -415,6 +459,8 @@ class TranscriptView(VerticalScroll):
 
     def clear(self) -> None:
         self._open_body = None
+        self._streaming = None
+        self._stream_text = ""
         self._selecting = False
         self.remove_children()
 

@@ -34,6 +34,13 @@ class StatusEvent:
 
 
 @dataclass(frozen=True)
+class TextDeltaEvent:
+
+    type: Literal["text_delta"]
+    text: str
+
+
+@dataclass(frozen=True)
 class TextEvent:
     type: Literal["text"]
     text: str
@@ -81,6 +88,7 @@ class SubagentEvent:
 
 Event: TypeAlias = (
     StatusEvent
+    | TextDeltaEvent
     | TextEvent
     | ToolCallEvent
     | ToolResultEvent

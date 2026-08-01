@@ -129,7 +129,8 @@ KEYS: dict[str, str] = {
     # Prompt
     "enter": "send the prompt, or take the highlighted completion",
     "ctrl+j": "newline without sending — works in every terminal",
-    "shift+enter": "newline, if your terminal can send it (many cannot)",
+    "\\ then enter": "newline, shell-style — also works everywhere",
+    "shift+enter": "newline, only if your terminal speaks the kitty protocol",
     "alt+enter": "newline, another terminal-dependent alias",
     "up / down": "walk the completion menu, or your prompt history",
     "tab": "accept the suggested command or @file",
@@ -163,6 +164,7 @@ KEY_GROUPS: dict[str, tuple[str, ...]] = {
     "Prompt": (
         "enter",
         "ctrl+j",
+        "\\ then enter",
         "shift+enter",
         "alt+enter",
         "up / down",

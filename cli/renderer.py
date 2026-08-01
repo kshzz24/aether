@@ -16,6 +16,7 @@ from events import (
     StatusEvent,
     SubagentEvent,
     TerminalEvent,
+    TextDeltaEvent,
     TextEvent,
     ToolCallEvent,
     ToolResultEvent,
@@ -54,6 +55,13 @@ class Renderer:
         match event:
             case StatusEvent(message=message):
                 print(f"\n[ {message} ]")
+
+            case TextDeltaEvent():
+                # Ignored on purpose. This renderer writes a one-shot log, and
+                # the authoritative TextEvent follows with the same words — so
+                # rendering deltas as well would print every answer twice. The
+                # TUI, which can replace what it drew, uses them.
+                pass
 
             case TextEvent(text=text):
                 print(text)
