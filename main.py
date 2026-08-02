@@ -7,6 +7,7 @@ directly (the renderer owns stdout).
 
 import argparse
 import asyncio
+import logging
 import os
 import sys
 import tomllib
@@ -14,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+import mcpclient
 import persistence
 from agent import Agent
 from approval import Approver
@@ -23,6 +25,7 @@ from client import Message, make_client
 from config import ForgeConfig, load_config
 from events import StatusEvent, TerminalEvent
 from gateway.client import GatewayClient
+from mcpclient import MCPConfigError, MCPManager, load_mcp_config
 from policy import PolicyEngine
 from skills import build_skill_registry, build_skill_tool, render_skill_menu
 from tools import build_registry
@@ -83,6 +86,47 @@ class Composition:
     # The agent's scratch task list. Held here so a surface can observe the same
     # store the `todo` tool writes to, without the agent core knowing.
     todos: TodoStore
+    # Connected MCP servers, or None when none are configured. Held here so a
+    # surface can render `/mcp` and close the connections at exit, without the
+    # agent ever learning that MCP exists.
+    mcp: MCPManager | None = None
+
+
+def load_mcp_manager() -> MCPManager | None:
+    """Read `.mcp.json` from both scopes. None when nothing is configured.
+
+    Construction is deliberately separate from connecting: this is sync and
+    cheap, so `build_composition` stays sync, while the connecting is async and
+    slow and belongs to whichever surface is driving the event loop.
+    """
+    project = Path.cwd() / mcpclient.PROJECT_CONFIG_NAME
+    user = Path.home() / mcpclient.USER_CONFIG_RELATIVE
+    try:
+        configs = load_mcp_config(project_path=project, user_path=user)
+    except MCPConfigError as exc:
+        # A malformed .mcp.json is a reason to run without MCP, not a reason
+        # to refuse to start.
+        logging.warning("ignoring MCP config: %s", exc)
+        return None
+    return MCPManager(configs=configs) if configs else None
+
+
+async def connect_mcp(comp: Composition) -> str:
+    """Connect the configured servers and federate their tools.
+
+    Returns a one-line summary for the surface to show, or "" when there is
+    nothing to say. Failures are already contained inside the manager: one dead
+    server is reported through `/mcp`, never raised.
+    """
+    if comp.mcp is None:
+        return ""
+    await comp.mcp.connect_all()
+    added = comp.mcp.register_into(comp.registry)
+    statuses = comp.mcp.statuses()
+    connected = sum(1 for s in statuses if s.connected)
+    failed = [s.name for s in statuses if not s.connected]
+    summary = f"mcp: {connected}/{len(statuses)} servers, {added} tools"
+    return summary + (f" — failed: {', '.join(failed)} (see /mcp)" if failed else "")
 
 
 def checkpoint(comp: Composition) -> None:
@@ -227,6 +271,7 @@ def build_composition(
         goal=goal,
         history=history,
         todos=todo_store,
+        mcp=load_mcp_manager(),
     )
 
 
@@ -240,13 +285,22 @@ async def _run(args: argparse.Namespace) -> None:
 
     renderer.notice(f"session {comp.session.id}")
 
-    async for event in comp.agent.run(comp.goal, history=comp.history):
-        renderer.render(event)
-        # StatusEvent fires at each turn's start (state complete through the prior
-        # turn); TerminalEvent at the end. Snapshot on both — a crash loses at
-        # most the in-flight turn.
-        if isinstance(event, (StatusEvent, TerminalEvent)):
-            checkpoint(comp)
+    summary = await connect_mcp(comp)
+    if summary:
+        renderer.notice(summary)
+
+    try:
+        async for event in comp.agent.run(comp.goal, history=comp.history):
+            renderer.render(event)
+            # StatusEvent fires at each turn's start (state complete through the
+            # prior turn); TerminalEvent at the end. Snapshot on both — a crash
+            # loses at most the in-flight turn.
+            if isinstance(event, (StatusEvent, TerminalEvent)):
+                checkpoint(comp)
+    finally:
+        # Subprocess servers outlive the run unless someone closes them.
+        if comp.mcp is not None:
+            await comp.mcp.aclose()
 
 
 def main() -> None:
