@@ -68,7 +68,17 @@ def _say(text: str) -> NormalizedResponse:
 # --------------------------------------------------------------------------
 
 
-async def test_shift_enter_inserts_a_newline_instead_of_submitting(sessions_dir):
+async def test_shift_enter_inserts_a_newline_when_the_terminal_can_send_it(
+    sessions_dir,
+):
+    """CAUTION: this passes in more terminals than it works in.
+
+    `pilot.press("shift+enter")` synthesizes a key Textual can only produce from
+    the Kitty keyboard protocol (`_xterm_parser.py:392`). Terminals without it
+    deliver a bare `enter` that is indistinguishable from a send, and no amount
+    of application code recovers the difference. The gesture people can actually
+    rely on is the backslash continuation below, and `ctrl+j`.
+    """
     app = ForgeApp(_args())
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -81,6 +91,36 @@ async def test_shift_enter_inserts_a_newline_instead_of_submitting(sessions_dir)
 
         assert prompt.text == "line one\nline two"
         assert app._run_in_flight is False  # nothing was submitted
+
+
+async def test_a_trailing_backslash_opens_a_new_line(sessions_dir):
+    """The newline gesture that needs no terminal support at all."""
+    app = ForgeApp(_args())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        prompt = app.query_one(PromptArea)
+        await pilot.click("#prompt")
+        await pilot.press(*"line one \\")
+        await pilot.press("enter")
+        await pilot.press(*"line two")
+        await pilot.pause()
+
+        assert prompt.text == "line one\nline two"
+        assert app._run_in_flight is False, "the backslash line was submitted"
+
+
+async def test_the_backslash_itself_is_not_sent(sessions_dir):
+    """It was punctuation asking for a newline, not part of the message —
+    exactly as a shell treats it."""
+    app = ForgeApp(_args())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        prompt = app.query_one(PromptArea)
+        await pilot.click("#prompt")
+        await pilot.press(*"ask \\")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert "\\" not in prompt.text
 
 
 async def test_enter_submits_a_multi_line_prompt_whole(sessions_dir):

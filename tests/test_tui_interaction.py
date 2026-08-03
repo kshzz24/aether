@@ -18,7 +18,7 @@ import persistence
 from client import NormalizedResponse, TextBlock, ToolCallBlock
 from events import ToolCallEvent, ToolResultEvent
 from tui.app import ForgeApp
-from tui.commands import COMMANDS, KEYS
+from tui.commands import COMMANDS, KEY_GROUPS, KEYS
 from tui.prompt import PromptArea
 from tui.transcript import TranscriptView
 
@@ -255,7 +255,10 @@ async def test_every_command_is_reachable_by_completion(sessions_dir):
         await pilot.pause()
         prompt = app.query_one(PromptArea)
         for name in COMMANDS:
-            prompt.text = name
+            # One character short of the full name: a *fully* typed command
+            # deliberately offers nothing, since there is nothing left to
+            # complete and the menu would just be offering you what you typed.
+            prompt.text = name[:-1]
             prompt.move_cursor(prompt.document.end)
             assert name in prompt.suggestions(), f"{name} not completable"
 
@@ -465,14 +468,46 @@ async def test_the_activity_indicator_clears_after_a_run(sessions_dir):
 # --------------------------------------------------------------------------
 
 
+def _bound_keys() -> set[str]:
+    """Every key bound anywhere a keystroke can land.
+
+    Bindings live on three widgets, not one: the app owns run control, the
+    transcript owns select mode (so `escape` can leave select mode before it
+    reaches the app's interrupt), and the prompt owns editing.
+    """
+    keys: set[str] = set()
+    for source in (ForgeApp, TranscriptView, PromptArea):
+        for binding in source.BINDINGS:
+            spec = binding[0] if isinstance(binding, tuple) else binding.key
+            keys.update(part.strip() for part in spec.split(","))
+    # Handled in `_on_key`/Textual defaults rather than declared as Bindings.
+    keys |= {"enter", "up", "down", "tab", "pgup", "pgdn", "ctrl+p"}
+    # A gesture, not a keypress: a trailing backslash makes the next `enter`
+    # open a line. It has no Binding to find because it cannot have one.
+    keys |= {"\\ then enter"}
+    return keys
+
+
+# `?` is documented the way a human writes it; Textual names it question_mark.
+_KEY_ALIASES = {"?": "question_mark"}
+
+
 def test_every_documented_key_is_actually_bound():
     """`/keys` is hand-written prose; this stops it describing a shortcut that
     does not exist."""
-    bound = {key for binding in ForgeApp.BINDINGS for key in binding[0].split(",")}
-    bound |= {"enter", "up", "down", "tab", "pgup", "pgdn", "ctrl+p"}
+    bound = _bound_keys()
     for documented in KEYS:
         for key in documented.split(" / "):
-            assert key.strip() in bound, f"/keys documents unbound {key!r}"
+            key = _KEY_ALIASES.get(key.strip(), key.strip())
+            assert key in bound, f"/keys documents unbound {key!r}"
+
+
+def test_every_documented_key_appears_in_exactly_one_help_group():
+    """The `?` overlay groups KEYS by hand; a key added to one and not the
+    other silently vanishes from the overlay."""
+    grouped = [key for keys in KEY_GROUPS.values() for key in keys]
+    assert sorted(grouped) == sorted(KEYS), "KEYS and KEY_GROUPS have drifted"
+    assert len(grouped) == len(set(grouped)), "a key is in two groups"
 
 
 def test_tool_calls_render_as_multiple_blocks_end_to_end(sessions_dir):

@@ -171,7 +171,28 @@ def test_resume_with_an_unknown_id_errors_without_raising(tmp_path):
     assert "cannot resume" in result.text
 
 
-def test_resume_without_an_id_shows_usage(tmp_path):
+def test_resume_without_an_id_offers_a_picker(tmp_path):
+    """Printing "usage: /resume <id>" made you run /sessions, read an id off
+    the screen, and type it back in. Offer the list instead."""
+    session = persistence.Session(
+        id="abc123",
+        goal="a saved goal",
+        provider="groq",
+        model="m",
+        created_at="now",
+        updated_at="now",
+        total_cost=0.0,
+        messages=[],
+    )
+    persistence.save(session, tmp_path)
+
     result = dispatch("/resume", _ctx(tmp_path))
+    assert result.pick_session is True
     assert result.resume_id is None
-    assert "usage" in result.text
+
+
+def test_resume_without_an_id_and_without_sessions_says_so(tmp_path):
+    """An empty picker is a worse answer than a sentence."""
+    result = dispatch("/resume", _ctx(tmp_path))
+    assert result.pick_session is False
+    assert "no saved sessions" in result.text

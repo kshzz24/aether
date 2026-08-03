@@ -37,15 +37,30 @@ def test_sample_covers_every_event_in_union():
     assert len(_one_of_each()) == len(get_args(Event))
 
 
+# Variants this renderer deliberately drops, with the reason. Anything not
+# listed here must produce output, so a variant can never be forgotten by
+# accident -- only ignored on purpose, in writing.
+_DELIBERATELY_SILENT = {
+    # The authoritative TextEvent follows with the same words. This renderer
+    # writes a one-shot log and cannot replace what it already printed, so
+    # rendering deltas too would print every answer twice.
+    "TextDeltaEvent",
+}
+
+
 def test_renderer_produces_output_for_every_event_type(capsys):
     # Every event must make the renderer emit something. A variant the renderer
     # doesn't handle prints nothing (silent isinstance fall-through) or raises
     # (match + assert_never) -- either way this catches it.
     renderer = Renderer()
     for event in _one_of_each():
+        name = type(event).__name__
         renderer.render(event)
         out = capsys.readouterr().out
-        assert out.strip(), f"{type(event).__name__} rendered nothing"
+        if name in _DELIBERATELY_SILENT:
+            assert not out.strip(), f"{name} is listed as silent but printed"
+            continue
+        assert out.strip(), f"{name} rendered nothing"
 
 
 def test_renderer_handles_approval_decision_event(capsys):
