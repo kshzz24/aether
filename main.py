@@ -27,6 +27,7 @@ from events import StatusEvent, TerminalEvent
 from gateway.client import GatewayClient
 from mcpclient import MCPConfigError, MCPManager, load_mcp_config
 from policy import PolicyEngine
+from server.wire import RunParams
 from skills import build_skill_registry, build_skill_tool, render_skill_menu
 from tools import build_registry
 from tools.hooks import Hooks
@@ -60,6 +61,9 @@ SYSTEM = (
     "complete."
 )
 
+
+_PRICES_PATH = Path(__file__).resolve().parent / "prices.toml"
+
 BUILTIN_SKILLS_DIR = Path(__file__).resolve().parent / "skills" / "builtin"
 
 
@@ -92,15 +96,16 @@ class Composition:
     mcp: MCPManager | None = None
 
 
-def load_mcp_manager() -> MCPManager | None:
+def load_mcp_manager(project_root: Path) -> MCPManager | None:
     """Read `.mcp.json` from both scopes. None when nothing is configured.
 
     Construction is deliberately separate from connecting: this is sync and
     cheap, so `build_composition` stays sync, while the connecting is async and
     slow and belongs to whichever surface is driving the event loop.
     """
-    project = Path.cwd() / mcpclient.PROJECT_CONFIG_NAME
+    project = project_root / mcpclient.PROJECT_CONFIG_NAME
     user = Path.home() / mcpclient.USER_CONFIG_RELATIVE
+
     try:
         configs = load_mcp_config(project_path=project, user_path=user)
     except MCPConfigError as exc:
@@ -138,7 +143,7 @@ def checkpoint(comp: Composition) -> None:
 
 
 def build_composition(
-    args: argparse.Namespace,
+    params: RunParams,
     *,
     approver: Approver,
     todos: TodoStore | None = None,
@@ -161,36 +166,41 @@ def build_composition(
     todo_store = todos if todos is not None else TodoStore()
     tool_hooks = hooks if hooks is not None else Hooks()
     sessions_dir = persistence.default_sessions_dir()
-
+    root = (params.project_root or Path.cwd()).resolve()
     # Resume: load the saved session. Its provider/model/goal drive the run so it
     # continues faithfully; the saved messages seed the loop as history.
     resume_session = None
-    if args.resume:
+    if params.resume:
         try:
-            resume_session = persistence.load(args.resume, sessions_dir)
+            resume_session = persistence.load(params.resume, sessions_dir)
         except (OSError, ValueError) as exc:
-            raise CompositionError(f"cannot resume {args.resume!r}: {exc}") from exc
+            raise CompositionError(f"cannot resume {params.resume!r}: {exc}") from exc
 
     # gateway_url is a composition-root concern, not validated config: ForgeConfig
     # uses extra="forbid", so pull it out before the merge. (For .forge/config.toml
     # support, add a gateway_url field to ForgeConfig; left CLI-only here by scope.)
-    gateway_url = args.gateway_url
+    gateway_url = params.gateway_url
 
     # Only flags the user *explicitly* set reach the config merge; unset flags
     # are None sentinels and must not clobber file/default config.
     cli_overrides = {
         k: v
-        for k, v in vars(args).items()
-        if k
-        not in ("goal", "gateway_url", "resume", "list_sessions", "tui", "setup")
-        and v is not None
+        for k, v in {
+            "provider": params.provider,
+            "model": params.model,
+            "max_iterations": params.max_iterations,
+            "max_cost_usd": params.max_cost_usd,
+            "approval_mode": params.approval_mode,
+        }.items()
+        if v is not None
     }
-    config = load_config(cli_overrides)
+
+    config = load_config(cli_overrides, project_path=root / ".forge" / "config.toml")
 
     # On resume the session's provider/model/goal win; otherwise use config + argv.
     provider = resume_session.provider if resume_session else config.provider
     model = resume_session.model if resume_session else config.model
-    goal = resume_session.goal if resume_session else args.goal
+    goal = resume_session.goal if resume_session else params.goal
     history = resume_session.messages if resume_session else None
     skill_registry = build_skill_registry(BUILTIN_SKILLS_DIR, config.skills_dir)
     skill_tool = build_skill_tool(registry=skill_registry)
@@ -198,7 +208,7 @@ def build_composition(
     system = SYSTEM + (f"\n\n{menu}" if menu else "")
     subagent_system = SUBAGENT_SYSTEM + (f"\n\n{menu}" if menu else "")
 
-    with open("prices.toml", "rb") as f:
+    with open(_PRICES_PATH, "rb") as f:
         prices = tomllib.load(f)
     api_key = os.environ.get(ENV_KEYS.get(provider, ""), "")
     rates = prices.get(provider, {})
@@ -213,9 +223,10 @@ def build_composition(
             fallback=client,
             rates=rates,
         )
-    repo_root = find_repo_root(Path.cwd()) or Path.cwd()
+    repo_root = find_repo_root(root) or root
     child_registry = build_registry(config, todo_store=todo_store)
     child_registry.register(skill_tool)
+    mcp = load_mcp_manager(root)
 
     def make_child() -> Agent:
         return Agent(
@@ -271,14 +282,14 @@ def build_composition(
         goal=goal,
         history=history,
         todos=todo_store,
-        mcp=load_mcp_manager(),
+        mcp=mcp,
     )
 
 
-async def _run(args: argparse.Namespace) -> None:
+async def _run(params: RunParams) -> None:
     renderer = Renderer()
     try:
-        comp = build_composition(args, approver=CliApprover())
+        comp = build_composition(params, approver=CliApprover())
     except CompositionError as exc:
         renderer.notice(str(exc))
         return
@@ -375,6 +386,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # argv is translated exactly once, here, and never travels further. Below
+    # this line `args` survives only for the two argv-shaped questions the
+    # parser owns (`--list-sessions`, `--tui`/`--setup`); everything that
+    # describes *a run* is in `params`.
+    params = RunParams.from_namespace(args)
+
     if args.list_sessions:
         metas = persistence.list_sessions(persistence.default_sessions_dir())
         Renderer().sessions(metas)
@@ -390,7 +407,7 @@ def main() -> None:
         ForgeApp(args).run()
         return
 
-    asyncio.run(_run(args))
+    asyncio.run(_run(params))
 
 
 if __name__ == "__main__":

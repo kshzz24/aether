@@ -1,5 +1,9 @@
+from __future__ import annotations
+
+import argparse
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, assert_never
 
 from events import (
     ApprovalDecisionEvent,
@@ -18,46 +22,53 @@ from events import (
 _MAX_RESULT_CHARS = 2000
 
 
-def _truncate(text: str, limit: int = _MAX_RESULT_CHARS) -> str:
-    if len(text) <= limit:
-        return text
-    return text[:limit] + f"\n... [truncated {len(text) - limit} chars]"
-
-
-def _format_args(arguments: dict[str, object]) -> str:
-    parts = []
-    for key, value in arguments.items():
-        rendered = str(value).replace("\n", "\\n")
-        if len(rendered) > 60:
-            rendered = rendered[:60] + "..."
-        parts.append(f"{key}={rendered}")
-    return ", ".join(parts)
-
-
-def _indent(text: str, prefix: str = "    ") -> str:
-    return "\n".join(prefix + line for line in text.splitlines())
-
-
 @dataclass(frozen=True)
 class RunParams:
-    goal: str | None
-    resume: str | None
-    gateway_url: str | None
-    provider: str | None
-    model: str | None
-    approval_mode: str | None
-    max_iterations: int | None
-    max_cost_usd: float | None
-    project_root: Path | None
+    """Everything `build_composition` needs, with nothing implicit left over.
+
+    Frozen because a surface that wants a different model builds a *new*
+    invocation rather than mutating the live one — `dataclasses.replace` in the
+    TUI's `_rebuild` rejects a typo'd key outright, where the old `setattr` onto
+    a Namespace accepted it and silently did nothing.
+
+    Every field defaults to None so a caller can name only what it cares about.
+    The server will build `RunParams(model=..., project_root=...)` and nothing
+    else; `replace` can only ever produce a complete instance if the original
+    was constructible bare.
+    """
+
+    goal: str | None = None
+    resume: str | None = None
+    gateway_url: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    approval_mode: str | None = None
+    max_iterations: int | None = None
+    max_cost_usd: float | None = None
+    project_root: Path | None = None
 
     @classmethod
-    def from_namespace(cls, args):
+    def from_namespace(cls, args: argparse.Namespace) -> RunParams:
+        """Translate argv once, at the CLI boundary.
+
+        `getattr` with a default rather than attribute access: `--setup`
+        short-circuits parsing in ways that leave attributes unset, and the TUI
+        tests build partial namespaces. A missing flag must read as None, not
+        raise.
+
+        `project_root` is deliberately absent. argv cannot express it — the CLI
+        is always rooted at wherever the user is standing — so it stays None and
+        `build_composition` is the single place that resolves None -> Path.cwd().
+        """
         return cls(
-            prompt=getattr(args, "prompt", None),
+            goal=getattr(args, "goal", None),
+            resume=getattr(args, "resume", None),
+            gateway_url=getattr(args, "gateway_url", None),
+            provider=getattr(args, "provider", None),
             model=getattr(args, "model", None),
-            system=getattr(args, "system", None),
-            temperature=getattr(args, "temperature", None),
-            max_tokens=getattr(args, "max_tokens", None),
+            approval_mode=getattr(args, "approval_mode", None),
+            max_iterations=getattr(args, "max_iterations", None),
+            max_cost_usd=getattr(args, "max_cost_usd", None),
             project_root=None,
         )
 

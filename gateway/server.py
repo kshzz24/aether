@@ -35,7 +35,7 @@ TRANSIENT = (
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.pool = await ledger.init_pool(os.environ["FORGE_LEDGER_DSN"])
-    with open(Path(__file__).resolve().parent.parent / "prices.toml" "rb") as f:
+    with open(Path(__file__).resolve().parent.parent / "prices.toml", "rb") as f:
         app.state.prices = tomllib.load(f)
     app.state.gwcfg = load_gateway_config()
     app.state.redis = redis.asyncio.from_url(

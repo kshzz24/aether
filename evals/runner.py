@@ -8,6 +8,8 @@ from pathlib import Path
 from agent import Agent
 from events import TerminalEvent, TerminalReason
 
+_PRICES_PATH = Path(__file__).resolve().parent / "prices.toml"
+
 
 @dataclass(frozen=True)
 class GoldenTask:
@@ -108,7 +110,7 @@ def main() -> None:
     parser.add_argument("--max-cost", dest="max_cost", type=float, default=1.0)
     args = parser.parse_args()
 
-    with open("prices.toml", "rb") as f:
+    with open(_PRICES_PATH, "rb") as f:
         prices = tomllib.load(f)
     api_key = os.environ.get(ENV_KEYS.get(args.provider, ""), "")
     rates = prices.get(args.provider, {})
