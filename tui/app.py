@@ -22,6 +22,7 @@ import os
 import time
 import tomllib
 from asyncio import CancelledError
+from dataclasses import replace
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -34,6 +35,7 @@ import persistence
 from approval import ApprovalMode
 from context.compactor import compact
 from events import CostEvent, StatusEvent, TerminalEvent
+from server.wire import RunParams
 from tui.approver import TuiApprover
 from tui.branding import banner
 from tui.catalog import find, load_catalog
@@ -241,7 +243,13 @@ class ForgeApp(App):
             self.register_theme(theme)
         self.theme = DEFAULT_THEME
 
+        # Two representations of the same invocation, on purpose. `_params` is
+        # what `build_composition` consumes and what `/model`, `/provider` and
+        # `/approval` mutate. `_args` survives only to feed `_needs_setup`,
+        # which asks argv-shaped questions (`--setup`) that have no business in
+        # a composition parameter object.
         self._args = args
+        self._params = RunParams.from_namespace(args)
         self._error: str | None = None
         self._turns = 0
         # NB: not `_running` — Textual's App already owns that name and flips it
@@ -269,7 +277,7 @@ class ForgeApp(App):
         try:
             # TuiApprover(self) is safe here: it only stores the reference.
             self.comp = composition_root.build_composition(
-                args, approver=TuiApprover(self), hooks=self._undo.hooks()
+                self._params, approver=TuiApprover(self), hooks=self._undo.hooks()
             )
         except composition_root.CompositionError as exc:
             self.comp = None
@@ -640,13 +648,15 @@ class ForgeApp(App):
         Also the recovery path when startup failed outright: `self.comp` is None
         there, so nothing may be read off it until the rebuild succeeds.
         """
-        for key, value in overrides.items():
-            setattr(self._args, key, value)
+        # `replace` on a frozen dataclass rejects an unknown key outright, where
+        # the old `setattr` onto a Namespace accepted a typo'd override and
+        # silently did nothing.
+        self._params = replace(self._params, **overrides)
         previous = self.comp
         history = previous.agent.messages if previous is not None else None
         try:
             self.comp = composition_root.build_composition(
-                self._args,
+                self._params,
                 approver=TuiApprover(self),
                 todos=previous.todos if previous is not None else None,
                 hooks=self._undo.hooks(),
@@ -654,7 +664,7 @@ class ForgeApp(App):
         except Exception as exc:  # noqa: BLE001
             self.comp = previous
             self.query_one(TranscriptView).error(
-                _explain(exc, provider=self._args.provider)
+                _explain(exc, provider=self._params.provider)
             )
             return
         # Carry the conversation across the swap: switching model mid-task
@@ -696,10 +706,14 @@ class ForgeApp(App):
 
     def _resume(self, session_id: str) -> None:
         """Reload the composition against a saved session and replay it."""
-        self._args.resume = session_id
+        # `resume` stays set on `_params` afterwards, so a later `/model` rebuild
+        # re-resumes this session. That is the pre-existing behaviour of the
+        # mutated Namespace, preserved deliberately — changing it is a behaviour
+        # fix, not part of this refactor.
+        self._params = replace(self._params, resume=session_id)
         try:
             self.comp = composition_root.build_composition(
-                self._args, approver=TuiApprover(self), hooks=self._undo.hooks()
+                self._params, approver=TuiApprover(self), hooks=self._undo.hooks()
             )
         except composition_root.CompositionError as exc:
             self.query_one(TranscriptView).notice(str(exc))
