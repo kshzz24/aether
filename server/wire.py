@@ -19,8 +19,6 @@ from events import (
     ToolResultEvent,
 )
 
-_MAX_RESULT_CHARS = 2000
-
 
 @dataclass(frozen=True)
 class RunParams:
@@ -74,48 +72,103 @@ class RunParams:
 
 
 def encode(event: Event) -> dict[str, Any]:
+    """Translate one `Event` into a JSON-serializable frame.
+
+    Pure and stateless: `seq` is session state and is applied by `frame`, which
+    is what lets the replay buffer re-encode a stored event and reproduce the
+    frame a live subscriber already saw.
+
+    The `type` discriminator is spelled out here rather than read off
+    `event.type` because two members of the union (`TerminalEvent`,
+    `ConfirmRequestEvent`) do not carry one, and because this encoder — not
+    `events.py` — owns the wire contract deployed clients are written against.
+
+    Enums encode as `.name.lower()`, never `.value`: `TerminalReason`,
+    `Verdict` and `ToolKind` are all `Enum(auto())`, so their values are
+    *positional* integers and reordering the enum would silently change the
+    wire format for every client and mis-decode every replayed transcript.
+    """
     match event:
         case StatusEvent(message=message):
-            print(f"\n[ {message} ]")
+            return {"type": "status", "message": message}
 
-        case TextDeltaEvent():
-            # Ignored on purpose. This renderer writes a one-shot log, and
-            # the authoritative TextEvent follows with the same words — so
-            # rendering deltas as well would print every answer twice. The
-            # TUI, which can replace what it drew, uses them.
-            pass
+        case TextDeltaEvent(text=text):
+            # Encoded, unlike in `cli/renderer.py`. That renderer drops deltas
+            # because it also prints the authoritative TextEvent and would
+            # double every answer; a browser streams, so dropping them here
+            # would leave the UI silent until a turn completed.
+            return {"type": "text_delta", "text": text}
 
         case TextEvent(text=text):
-            print(text)
+            return {"type": "text", "text": text}
 
         case ToolCallEvent(name=name, arguments=arguments):
-            print(f"  -> {name}({_format_args(arguments)})")
+            # `arguments` stays a nested object: the browser renders it as a
+            # table and the confirm modal needs it editable.
+            return {"type": "tool_call", "name": name, "arguments": arguments}
 
-        case ToolResultEvent(result=result):
-            print(_indent(_truncate(result)))
+        case ToolResultEvent(name=name, result=result):
+            # Deliberately untruncated. The renderer caps at 2000 chars for a
+            # terminal scrollback; here a replayed frame must match the live
+            # one byte-for-byte, so trimming for display is the client's job.
+            return {"type": "tool_result", "name": name, "result": result}
 
         case SubagentEvent(task=task, phase=phase, detail=detail):
-            if phase == "started":
-                print(f"\n[ subagent -> {task} ]")
-            else:
-                suffix = f": {detail}" if detail else ""
-                print(f"[ subagent done{suffix} ]")
+            return {
+                "type": "subagent",
+                "task": task,
+                "phase": phase,
+                "detail": detail,
+            }
 
         case CostEvent(cost_usd=cost_usd, total_cost_usd=total):
-            print(f"  [${cost_usd:.4f} this turn | ${total:.4f} total]")
+            return {
+                "type": "cost",
+                "cost_usd": cost_usd,
+                "total_cost_usd": total,
+            }
 
         case ApprovalDecisionEvent(
-            tool_name=name, verdict=verdict, source=source, danger_reasons=reasons
+            tool_name=tool_name,
+            kind=kind,
+            danger_reasons=danger_reasons,
+            verdict=verdict,
+            approved=approved,
+            source=source,
         ):
-            suffix = f" — {'; '.join(reasons)}" if reasons else ""
-            print(f"[ decision {name}: {verdict.name} ({source}){suffix} ]")
+            return {
+                "type": "approval_decision",
+                "tool_name": tool_name,
+                "kind": kind.name.lower(),
+                "danger_reasons": danger_reasons,
+                "verdict": verdict.name.lower(),
+                "approved": approved,
+                "source": source,
+            }
 
-        case ConfirmRequestEvent(tool_name=name, arguments=arguments, reason=reason):
-            print(f"\n[ confirm? {name}({_format_args(arguments)}) — {reason} ]")
+        case ConfirmRequestEvent(
+            tool_name=tool_name, arguments=arguments, reason=reason
+        ):
+            # No `request_id`: a ConfirmRequestEvent off the agent's stream is a
+            # notification. The correlation id belongs to `ServerApprover`'s
+            # parked future and arrives on its own frame — minting one here
+            # would produce ids that resolve nothing, and every replayed
+            # transcript would re-offer confirms answered long ago.
+            return {
+                "type": "confirm_request",
+                "tool_name": tool_name,
+                "arguments": arguments,
+                "reason": reason,
+            }
 
         case TerminalEvent(reason=reason, detail=detail):
-            label = reason.name.lower().replace("_", " ")
-            print(f"\n[ {label}{f': {detail}' if detail else ''} ]")
+            # Underscores kept. The CLI prints `loop detected` because a human
+            # reads it; the client switches on an identifier.
+            return {
+                "type": "terminal",
+                "reason": reason.name.lower(),
+                "detail": detail,
+            }
 
         case _ as unreachable:
             assert_never(unreachable)
