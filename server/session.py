@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections import deque
 
-from events import Event
-from main import Composition
+import persistence
+from client import Message, TextBlock
+from events import CostEvent, Event, StatusEvent, TerminalEvent, TerminalReason
+from main import Composition, checkpoint
 from server import wire
 
 logger = logging.getLogger(__name__)
@@ -14,6 +17,10 @@ logger = logging.getLogger(__name__)
 _SENTINEL = object()
 
 _OVERFLOW_FRAME = {"type": "overflow"}
+
+
+class SessionBusy(RuntimeError):
+    """One run in flight per session. Becomes HTTP 409 at stage 4."""
 
 
 class AgentSession:
@@ -25,6 +32,47 @@ class AgentSession:
         self._seq = 0
         self.transcript: list[dict] = []
         self._subs: set[Subscriber] = set()
+        self._running = False
+        self._task: asyncio.Task | None = None
+        self._history: list[Message] = list(comp.history or [])
+        self.total_cost = 0.0
+
+    @property
+    def running(self) -> bool:
+        return self._running
+
+    @property
+    def id(self) -> str:
+        return self._comp.session.id
+
+    def start(self, goal: str) -> None:
+        if self._running:
+            raise SessionBusy("a run is already in flight for this session")
+        self._running = True
+        self._task = asyncio.create_task(self._drive(goal))
+
+    async def _drive(self, goal: str) -> None:
+
+        try:
+            async for event in self._comp.agent.run(
+                goal, history=self._next_history(goal)
+            ):
+                self.publish(event=event)
+        except asyncio.CancelledError:
+            self.publish(StatusEvent(type="status", message="interrupted"))
+            raise
+        except Exception as exc:
+            logger.exception("drive task failed")
+            self.publish(TerminalEvent(reason=TerminalReason.ERROR, detail=str(exc)))
+        finally:
+            self._history = list(self._comp.agent.messages)
+            self._running = False
+            self._checkpoint()
+
+    def _next_history(self, goal: str) -> list[Message] | None:
+        if not self._history:
+            return None
+        return [*self._history, Message(role="user", blocks=[TextBlock(text=goal)])]
 
     def publish(self, event: Event) -> None:
         """Record one event and hand it to every live subscriber.
@@ -32,7 +80,10 @@ class AgentSession:
         Synchronous on purpose: containing no `await` makes it atomic against the
         event loop, so a publish can never interleave with a `subscribe`.
         """
+        if isinstance(event, CostEvent):
+            self.total_cost += event.cost_usd
         frame = wire.frame(event=event, seq=self._seq)
+
         self._seq += 1
         self.transcript.append(frame)
 
@@ -79,6 +130,35 @@ class AgentSession:
             # subscriber has frames buffered, so it cannot be parked in
             # `await get()`, and `_closed` ends it once those drain.
             pass
+
+    def _checkpoint(self) -> None:
+        comp = self._comp
+        checkpoint(comp)
+        comp.session.total_cost = self.total_cost
+        persistence.save(comp.session, comp.sessions_dir)
+
+    async def wait(self) -> None:
+        task = self._task
+        if task is None:
+            return
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    async def interrupt(self) -> None:
+        task = self._task
+        if task is None or task.done():
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        self._running = False
+
+    async def aclose(self) -> None:
+        """Stop the run, persist, release every subscriber. Idempotent."""
+        await self.interrupt()
+        self._checkpoint()
+        for sub in list(self._subs):
+            self.unsubscribe(sub)
 
 
 class Subscriber:
