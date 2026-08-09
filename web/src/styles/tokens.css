@@ -1,0 +1,171 @@
+/* FORGE web — design tokens.
+ *
+ * Dark only, deliberately. This is an instrument you watch while an agent edits
+ * your repo; a half-hearted light mode would dilute the one thing the palette
+ * has to do, which is make a consent moment impossible to miss.
+ *
+ * The palette is the type system. `ToolKind` has four members, so there are four
+ * hues — and colour is *scarce*: it appears only where a permission decision was
+ * made (a confirm, an approval decision) or where a run ended. Everything else is
+ * monochrome. That is what makes a danger flag jump off a long transcript instead
+ * of competing with decoration.
+ *
+ * Note `tool_call` and `tool_result` are monochrome even though they name a tool:
+ * `ToolCallEvent` carries no `kind`, and inventing a hue from the tool name would
+ * be asserting data the wire format does not have.
+ */
+
+:root {
+  /* ground */
+  --ground: #0b0e14;
+  --raised: #141922;
+  --raised-2: #1b2230;
+  --hairline: #232a36;
+  --hairline-bright: #2f394a;
+
+  /* text */
+  --prose: #dde3ec;
+  --prose-dim: #a8b3c4;
+  --muted: #7a879b;
+  --muted-2: #55606f;
+
+  /* the four ToolKinds */
+  --read: #5aa9e6;
+  --write: #e8b44a;
+  --execute: #c86fd9;
+  --agent: #4fd1a5;
+
+  /* outcomes */
+  --danger: #f2545b;
+  --ok: #4fd1a5;
+  --warn: #e8b44a;
+
+  /* The dashboard is gateway metrics, a different domain from the transcript's
+   * ToolKind hues, so it gets its own single hue rather than borrowing one.
+   * Cost-by-model is one measure across categories — one series — so every bar is
+   * this colour and the labels carry identity. Colouring bars by rank would repaint
+   * the survivors the moment a filter changed the set. */
+  --metric: #5aa9e6;
+
+  /* type */
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono",
+    "Roboto Mono", Menlo, Consolas, monospace;
+  --serif: "Source Serif 4", ui-serif, Georgia, "Times New Roman", serif;
+  --grotesk: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, Segoe UI,
+    sans-serif;
+
+  /* scale — 1.25 from 13px, because the densest thing on screen is 12px data */
+  --t-micro: 0.6875rem; /* 11px  gutter seq, eyebrows */
+  --t-data: 0.8125rem; /* 13px  mono: args, results, diffs */
+  --t-body: 0.9375rem; /* 15px  serif: model prose */
+  --t-lead: 1.1875rem; /* 19px */
+  --t-display: 1.75rem; /* 28px  dashboard figures */
+
+  /* rhythm */
+  --gutter: 4.75rem;
+  --pad: 0.75rem;
+  --pad-2: 1.25rem;
+  --radius: 3px; /* nearly square; this is an instrument, not a card UI */
+
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--prose);
+  font-family: var(--grotesk);
+  font-size: var(--t-data);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Focus is never removed, only restyled — you drive this from the keyboard. */
+:focus-visible {
+  outline: 2px solid var(--read);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+code,
+pre,
+kbd {
+  font-family: var(--mono);
+  font-size: var(--t-data);
+}
+
+pre {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Wide content scrolls inside its own box; the page body never scrolls sideways. */
+.scroll-x {
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--hairline-bright);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.eyebrow {
+  font-family: var(--grotesk);
+  font-size: var(--t-micro);
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>FORGE</title>
+
+    <!--
+      TODO(post-v1): self-host these three as woff2 in public/fonts/. A tool you
+      run while coding should render correctly offline; today a cold cache with
+      no network falls back to the local stacks in tokens.css, which is legible
+      but loses the type system's meaning.
+
+      Three faces, three jobs: mono for what the machine did, serif for what the
+      model said, grotesk for what the system labels it.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

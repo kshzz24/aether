@@ -73,3 +73,6 @@ desktop.ini
 # Temporary files
 tmp/
 temp/
+# web UI — the bundle is a build artifact; `npm --prefix web run build` makes it
+web/node_modules/
+server/static/

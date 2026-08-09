@@ -1,0 +1,767 @@
+/* Component styles. Single-class selectors throughout — no element selectors that
+ * could later fight a class for specificity, and no nested overrides of padding,
+ * which is where CSS at this size usually goes wrong.
+ */
+
+/* --- shell ------------------------------------------------------------------ */
+
+.shell {
+  display: grid;
+  grid-template-columns: 15.5rem 1fr;
+  grid-template-rows: auto 1fr auto;
+  grid-template-areas:
+    "brand header"
+    "aside main"
+    "aside composer";
+  height: 100%;
+  min-height: 0;
+}
+
+.brand {
+  grid-area: brand;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0 var(--pad-2);
+  height: 3.25rem;
+  border-bottom: 1px solid var(--hairline);
+  border-right: 1px solid var(--hairline);
+}
+
+.brand-mark {
+  font-family: var(--grotesk);
+  font-size: var(--t-lead);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.brand-note {
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  color: var(--muted-2);
+}
+
+.topbar {
+  grid-area: header;
+  display: flex;
+  align-items: center;
+  gap: var(--pad-2);
+  padding: 0 var(--pad-2);
+  height: 3.25rem;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.topbar-spacer {
+  flex: 1;
+}
+
+.aside {
+  grid-area: aside;
+  min-height: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--hairline);
+  padding: var(--pad-2) 0;
+}
+
+.main {
+  grid-area: main;
+  display: grid;
+  grid-template-columns: 2.5rem 1fr;
+  min-height: 0;
+}
+
+.composer {
+  grid-area: composer;
+  border-top: 1px solid var(--hairline);
+  padding: var(--pad) var(--pad-2);
+}
+
+@media (max-width: 860px) {
+  .shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto 1fr auto;
+    grid-template-areas: "brand" "header" "aside" "main" "composer";
+  }
+  .brand,
+  .aside {
+    border-right: none;
+  }
+  .aside {
+    max-height: 9rem;
+  }
+  /* The topbar carries five controls. Below this width they must wrap rather than
+     push each other off the edge — the transport toggle in particular is the one
+     control you reach for when a stream misbehaves. */
+  .topbar {
+    height: auto;
+    flex-wrap: wrap;
+    gap: 0.5rem var(--pad);
+    padding: 0.5rem var(--pad-2);
+  }
+  .topbar-spacer {
+    flex-basis: 100%;
+  }
+}
+
+/* Reclaim the gutter on a phone: the tag is a convenience, the seq is the data. */
+@media (max-width: 560px) {
+  .transcript {
+    grid-template-columns: 2.9rem minmax(0, 1fr);
+  }
+  .spine-tag {
+    display: none;
+  }
+  .row {
+    padding-inline: 0.6rem;
+  }
+}
+
+/* --- the vertical cost gauge: the signature -------------------------------- */
+
+/* A fuel gauge, not a vanity stat. Every run is bounded by max_cost_usd, so this
+ * is how close the agent is to being stopped — and when a run ends on max_cost,
+ * this is the explanation. Vertical because it lives beside the whole transcript
+ * rather than inside a summary row. */
+
+.gauge {
+  position: relative;
+  border-right: 1px solid var(--hairline);
+  background: linear-gradient(var(--ground), var(--raised));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--pad) 0;
+  gap: 0.5rem;
+}
+
+.gauge-track {
+  position: relative;
+  flex: 1;
+  width: 6px;
+  min-height: 4rem;
+  border-radius: 3px;
+  background: var(--hairline);
+  overflow: hidden;
+}
+
+.gauge-fill {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: var(--fill, 100%);
+  border-radius: 3px;
+  background: var(--agent);
+  transition: height 320ms var(--ease), background 320ms var(--ease);
+}
+
+.gauge-fill.warn {
+  background: var(--warn);
+}
+
+.gauge-fill.over {
+  background: var(--danger);
+}
+
+.gauge-figure {
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  color: var(--prose-dim);
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  letter-spacing: 0.04em;
+}
+
+.gauge-cap {
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  color: var(--muted-2);
+}
+
+@media (max-width: 860px) {
+  .main {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  .gauge {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--pad);
+    padding: 0.4rem var(--pad-2);
+    border-right: none;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .gauge-track {
+    width: auto;
+    height: 6px;
+    min-height: 0;
+  }
+  .gauge-fill {
+    inset: 0 auto 0 0;
+    height: 100%;
+    width: var(--fill, 100%);
+    transition: width 320ms var(--ease), background 320ms var(--ease);
+  }
+  .gauge-figure {
+    writing-mode: horizontal-tb;
+    transform: none;
+  }
+}
+
+/* --- transcript: the typed spine ------------------------------------------- */
+
+.scroller {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.transcript {
+  display: grid;
+  grid-template-columns: var(--gutter) minmax(0, 1fr);
+  align-content: start;
+  padding-bottom: 30vh; /* room to read the newest row without it hugging the edge */
+}
+
+/* The spine. seq is real data — it is literally the Last-Event-ID a reconnect
+ * resumes from — so showing it is honest rather than ornamental. */
+.spine {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  padding: 0.55rem 0.6rem 0 0;
+  border-right: 1px solid var(--hairline);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  color: var(--muted-2);
+  user-select: none;
+}
+
+.spine-seq {
+  font-variant-numeric: tabular-nums;
+}
+
+.spine-tag {
+  min-width: 1.9rem;
+  text-align: right;
+  color: var(--muted);
+}
+
+.spine-mark {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 1px;
+  background: var(--hairline-bright);
+  transform: translateY(-2px);
+}
+
+/* One orchestrated moment: an arriving row flashes its mark, then settles.
+ * text_delta streaming is already motion; nothing is stacked on top of it. */
+@keyframes spine-arrive {
+  from {
+    box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 40%, transparent);
+    opacity: 0.4;
+  }
+  to {
+    box-shadow: 0 0 0 0 transparent;
+    opacity: 1;
+  }
+}
+
+.spine-mark.accent {
+  animation: spine-arrive 520ms var(--ease);
+}
+
+.row {
+  min-width: 0;
+  padding: 0.4rem var(--pad-2) 0.4rem var(--pad);
+}
+
+/* --- prose: the model's voice ---------------------------------------------- */
+
+/* Unboxed serif, against boxed mono for everything the machine did. The reading
+ * task is genuinely bifurcated — audit the actions, read the answer — and the type
+ * split does that work with no UI chrome at all. */
+.prose {
+  font-family: var(--serif);
+  font-size: var(--t-body);
+  line-height: 1.62;
+  color: var(--prose);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 68ch;
+}
+
+.caret {
+  display: inline-block;
+  width: 0.5ch;
+  margin-left: 0.1ch;
+  background: var(--read);
+  animation: blink 1.1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  to {
+    opacity: 0;
+  }
+}
+
+.status {
+  font-family: var(--grotesk);
+  font-size: var(--t-micro);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.costline {
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  color: var(--muted-2);
+}
+
+/* --- cards: what the machine did ------------------------------------------ */
+
+.card {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--raised);
+  overflow: hidden;
+  max-width: 78ch;
+}
+
+.card.flagged {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--hairline));
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.65rem;
+  background: var(--raised-2);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.card-name {
+  font-family: var(--grotesk);
+  font-weight: 500;
+  font-size: var(--t-data);
+  color: var(--prose);
+}
+
+.card-body {
+  padding: 0.55rem 0.65rem;
+  font-family: var(--mono);
+  color: var(--prose-dim);
+}
+
+.args {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.15rem 0.7rem;
+  font-family: var(--mono);
+  font-size: var(--t-data);
+}
+
+.args-key {
+  color: var(--muted);
+}
+
+.args-val {
+  color: var(--prose);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.result {
+  font-family: var(--mono);
+  font-size: var(--t-data);
+  color: var(--prose-dim);
+  max-height: 18rem;
+  overflow: auto;
+}
+
+.result.denied {
+  color: var(--danger);
+}
+
+.pill {
+  font-family: var(--grotesk);
+  font-size: var(--t-micro);
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+
+.dangers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.danger-flag {
+  font-family: var(--grotesk);
+  font-size: var(--t-micro);
+  color: var(--danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  border-radius: 2px;
+  padding: 0.1rem 0.4rem;
+}
+
+/* --- diff ------------------------------------------------------------------ */
+
+.diff {
+  font-family: var(--mono);
+  font-size: var(--t-data);
+  line-height: 1.45;
+  max-height: 22rem;
+  overflow: auto;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--ground);
+  padding: 0.5rem 0.65rem;
+}
+
+.diff-add {
+  color: var(--ok);
+}
+
+.diff-del {
+  color: var(--danger);
+}
+
+.diff-meta {
+  color: var(--muted-2);
+}
+
+/* --- controls -------------------------------------------------------------- */
+
+.toggle {
+  display: inline-flex;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.toggle-option {
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.28rem 0.6rem;
+  color: var(--muted);
+  background: transparent;
+}
+
+.toggle-option[aria-pressed="true"] {
+  color: var(--ground);
+  background: var(--prose-dim);
+}
+
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  color: var(--muted);
+}
+
+.state-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted-2);
+}
+
+.state-dot.open {
+  background: var(--ok);
+}
+.state-dot.connecting {
+  background: var(--warn);
+}
+.state-dot.dropped {
+  background: var(--danger);
+}
+
+.btn {
+  font-family: var(--grotesk);
+  font-size: var(--t-data);
+  font-weight: 500;
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--hairline-bright);
+  border-radius: var(--radius);
+  color: var(--prose);
+  background: var(--raised-2);
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--muted);
+}
+
+.btn:disabled {
+  color: var(--muted-2);
+  cursor: not-allowed;
+}
+
+.btn.primary {
+  color: var(--ground);
+  background: var(--read);
+  border-color: var(--read);
+}
+
+.btn.danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+}
+
+.field {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-end;
+}
+
+.field-input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: var(--t-data);
+  color: var(--prose);
+  background: var(--raised);
+  border: 1px solid var(--hairline-bright);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.6rem;
+  resize: vertical;
+  min-height: 2.4rem;
+  max-height: 9rem;
+}
+
+.field-input::placeholder {
+  color: var(--muted-2);
+}
+
+.hint {
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  color: var(--muted-2);
+  margin-top: 0.35rem;
+}
+
+.banner {
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  color: var(--danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  border-radius: var(--radius);
+  padding: 0.3rem 0.55rem;
+  margin-bottom: 0.5rem;
+}
+
+/* --- session list ---------------------------------------------------------- */
+
+.aside-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--pad-2) 0.5rem;
+}
+
+.session {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem var(--pad-2);
+  border-left: 2px solid transparent;
+}
+
+.session:hover {
+  background: var(--raised);
+}
+
+.session[aria-current="true"] {
+  border-left-color: var(--read);
+  background: var(--raised);
+}
+
+.session-goal {
+  font-family: var(--grotesk);
+  font-size: var(--t-data);
+  color: var(--prose);
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-meta {
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  color: var(--muted-2);
+}
+
+.empty {
+  padding: 0 var(--pad-2);
+  font-family: var(--grotesk);
+  font-size: var(--t-data);
+  color: var(--muted);
+  max-width: 32ch;
+}
+
+/* --- confirm modal --------------------------------------------------------- */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--ground) 78%, transparent);
+  display: grid;
+  place-items: center;
+  padding: var(--pad-2);
+  z-index: 20;
+}
+
+.modal {
+  width: min(46rem, 100%);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--raised);
+  border: 1px solid var(--hairline-bright);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 64px rgb(0 0 0 / 55%);
+}
+
+.modal.flagged {
+  border-color: var(--danger);
+}
+
+.modal-head {
+  padding: var(--pad) var(--pad-2);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.modal-title {
+  font-family: var(--grotesk);
+  font-size: var(--t-lead);
+  font-weight: 700;
+  margin: 0.15rem 0 0;
+}
+
+.modal-body {
+  padding: var(--pad-2);
+  overflow-y: auto;
+  display: grid;
+  gap: var(--pad);
+}
+
+.modal-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: var(--pad) var(--pad-2);
+  border-top: 1px solid var(--hairline);
+}
+
+.modal-foot-spacer {
+  flex: 1;
+}
+
+.kbd {
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  color: var(--muted);
+  border: 1px solid var(--hairline-bright);
+  border-radius: 2px;
+  padding: 0 0.25rem;
+  margin-right: 0.35rem;
+}
+
+/* --- dashboard ------------------------------------------------------------- */
+
+.dash {
+  grid-area: main;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--pad-2);
+  display: grid;
+  gap: var(--pad-2);
+  align-content: start;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+}
+
+.tile {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--raised);
+  padding: var(--pad-2);
+}
+
+.tile.wide {
+  grid-column: 1 / -1;
+}
+
+.tile-figure {
+  font-family: var(--mono);
+  font-size: var(--t-display);
+  font-weight: 500;
+  color: var(--prose);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  margin-top: 0.35rem;
+}
+
+.tile-sub {
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  color: var(--muted-2);
+  margin-top: 0.3rem;
+}
+
+.bars {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: var(--pad);
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: minmax(6rem, 12rem) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.bar-label {
+  font-family: var(--mono);
+  font-size: var(--t-data);
+  color: var(--prose-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-track {
+  height: 10px;
+  border-radius: 2px;
+  background: var(--hairline);
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: 2px;
+}
+
+.bar-value {
+  font-family: var(--mono);
+  font-size: var(--t-data);
+  color: var(--prose);
+  font-variant-numeric: tabular-nums;
+}
