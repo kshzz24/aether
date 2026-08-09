@@ -6,6 +6,7 @@ import logging
 from collections import deque
 
 import persistence
+from approval import Approver
 from client import Message, TextBlock
 from events import CostEvent, Event, StatusEvent, TerminalEvent, TerminalReason
 from main import Composition, checkpoint
@@ -26,8 +27,17 @@ class SessionBusy(RuntimeError):
 class AgentSession:
     """One conversation: its transcript, its `seq` counter, its subscribers."""
 
-    def __init__(self, comp: Composition, *, queue_maxsize: int = 256) -> None:
+    def __init__(
+        self,
+        comp: Composition,
+        *,
+        approver: Approver | None = None,
+        queue_maxsize: int = 256,
+    ) -> None:
         self._comp = comp
+        # Held explicitly rather than reached for through `agent._approver`, which
+        # would make a private attribute part of the HTTP layer's vocabulary.
+        self._approver = approver
         self._queue_maxsize = queue_maxsize
         self._seq = 0
         self.transcript: list[dict] = []
@@ -40,6 +50,11 @@ class AgentSession:
     @property
     def running(self) -> bool:
         return self._running
+
+    @property
+    def approver(self) -> Approver | None:
+        """Where stage 4's decisions route sends a human's answer."""
+        return self._approver
 
     @property
     def id(self) -> str:
@@ -75,14 +90,28 @@ class AgentSession:
         return [*self._history, Message(role="user", blocks=[TextBlock(text=goal)])]
 
     def publish(self, event: Event) -> None:
-        """Record one event and hand it to every live subscriber.
+        """Record one event off the agent's stream and hand it to every subscriber."""
+        if isinstance(event, CostEvent):
+            self.total_cost += event.cost_usd
+        self._publish_frame(wire.encode(event))
+
+    def publish_frame(self, body: dict) -> None:
+        """Publish a frame the *server* minted, not one the agent yielded.
+
+        Only `ServerApprover`'s confirm uses this. It goes through the same
+        numbering and fan-out as `publish`, so it lands in the transcript with a
+        `seq` and replays on reconnect — which is the only mechanism that can
+        re-show a pending question to a browser that reconnected mid-confirm.
+        """
+        self._publish_frame(body)
+
+    def _publish_frame(self, body: dict) -> None:
+        """The shared tail of both publish paths: number, record, fan out.
 
         Synchronous on purpose: containing no `await` makes it atomic against the
         event loop, so a publish can never interleave with a `subscribe`.
         """
-        if isinstance(event, CostEvent):
-            self.total_cost += event.cost_usd
-        frame = wire.frame(event=event, seq=self._seq)
+        frame = {**body, "seq": self._seq}
 
         self._seq += 1
         self.transcript.append(frame)

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, assert_never
 
+from approval import ApprovalRequest
 from events import (
     ApprovalDecisionEvent,
     ConfirmRequestEvent,
@@ -176,3 +177,34 @@ def encode(event: Event) -> dict[str, Any]:
 
 def frame(event: Event, seq: int) -> dict[str, Any]:
     return {**encode(event), "seq": seq}
+
+
+def confirm_frame(request: ApprovalRequest, request_id: str) -> dict[str, Any]:
+    """The answerable question, minted by `ServerApprover` rather than the agent.
+
+    A second frame is needed because `ConfirmRequestEvent` cannot carry any of
+    this: no `kind`, no `danger_reasons`, no `diff`, and no correlation id. Those
+    live on `ApprovalRequest`, which only the approver sees, and a browser modal
+    needs all four — the id to answer with, `danger_reasons` to decide whether to
+    offer "always", the diff to show what a write would do.
+
+    No `seq` here, for the same reason `encode` has none: numbering is session
+    state, applied by `AgentSession.publish_frame`. Unlike the overflow notice
+    this frame *does* get one and *does* enter the transcript, so a browser that
+    reconnects mid-confirm is re-shown the pending question.
+
+    `offers_always` is computed here, server-side, and not left to the client:
+    withholding "always" from a flagged call is a security rule
+    (`tui/approver.py:76-84`), and a security rule enforced only in browser
+    JavaScript is not enforced.
+    """
+    return {
+        "type": "confirm",
+        "request_id": request_id,
+        "tool_name": request.tool_name,
+        "arguments": request.arguments,
+        "kind": request.kind.name.lower(),
+        "danger_reasons": list(request.danger_reasons),
+        "diff": request.diff,
+        "offers_always": not request.danger_reasons,
+    }

@@ -8,6 +8,7 @@ import persistence
 from approval import Approver
 from main import build_composition, connect_mcp
 from persistence import SessionMeta
+from server.approver import ServerApprover
 from server.session import AgentSession
 from server.wire import RunParams
 
@@ -34,8 +35,15 @@ class SessionManager:
     async def create(self, params: RunParams) -> AgentSession:
         if len(self._live) >= self._max_sessions:
             raise SessionLimitReached(...)
-        comp = build_composition(params, approver=self._make_approver())
-        session = AgentSession(comp)
+        approver = self._make_approver()
+        comp = build_composition(params, approver=approver)
+        session = AgentSession(comp, approver=approver)
+        # The one place that can see approver, composition and session at once, so
+        # the one place that can close the cycle between them. Guarded rather than
+        # unconditional: the manager's tests inject a `ScriptedApprover`, which has
+        # no `bind` and needs none.
+        if isinstance(approver, ServerApprover):
+            approver.bind(session.publish_frame)
         await connect_mcp(comp)
         self._live[session.id] = session
         return session
