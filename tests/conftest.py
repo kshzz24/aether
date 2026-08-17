@@ -153,3 +153,68 @@ def sample_events() -> list[Event]:
         ),
         SubagentEvent(type="subagent", task="explore the repo", phase="started"),
     ]
+
+
+# --- phase 8, stages 4-6: the HTTP layer --------------------------------------
+#
+# Shared by five test modules, so it lives here rather than being copied. Nothing
+# below touches the network: `StubClient` answers every model call and
+# `load_mcp_manager` is stubbed out, so an app built by `forge_app` can run a
+# whole session with no provider and no subprocesses.
+
+SERVER_TOKEN = "test-token"
+
+
+@pytest.fixture
+def forge_app(tmp_path, monkeypatch):
+    """A factory for a `create_app` rooted at a temp dir, with a known token.
+
+    `idle_timeout_sec`/`reap_interval_sec` are exposed because the lifecycle tests
+    need a reaper that fires inside a test's patience.
+    """
+    import main
+    import persistence
+    from server.app import create_app
+
+    monkeypatch.setenv("FORGE_SERVER_TOKEN", SERVER_TOKEN)
+    monkeypatch.setattr(persistence, "default_sessions_dir", lambda: tmp_path)
+    monkeypatch.setattr(main, "load_mcp_manager", lambda root: None)
+    for key in ("GROQ_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.setenv(key, "test-key-not-used")
+
+    def _make(**kwargs):
+        kwargs.setdefault("root", tmp_path)
+        return create_app(**kwargs)
+
+    return _make
+
+
+@pytest.fixture
+def auth() -> dict[str, str]:
+    return {"Authorization": f"Bearer {SERVER_TOKEN}"}
+
+
+@pytest.fixture
+def stub_responses(monkeypatch):
+    """Make every session the app builds talk to a `StubClient`.
+
+    Patching `build_composition` is the only seam: the app builds compositions
+    itself, several requests deep, and a test cannot reach in to swap the client
+    afterwards without racing the run it just started.
+    """
+    from server import sessions as sessions_module
+
+    real = sessions_module.build_composition
+    scripts: list[list] = []
+
+    def _script(responses: list) -> None:
+        scripts.append(list(responses))
+
+    def _patched(params, **kwargs):
+        comp = real(params, **kwargs)
+        if scripts:
+            comp.agent.client = StubClient(scripts.pop(0))
+        return comp
+
+    monkeypatch.setattr(sessions_module, "build_composition", _patched)
+    return _script

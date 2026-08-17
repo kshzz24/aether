@@ -323,6 +323,15 @@ def main() -> None:
         if reconfigure is not None:
             reconfigure(encoding="utf-8")
 
+    # `forge serve` delegates before argparse sees argv. A subparser would make
+    # every serving flag part of the run parser's surface, and `RunParams` has
+    # nothing to say about a host and a port.
+    if sys.argv[1:2] == ["serve"]:
+        from server.__main__ import main as serve
+
+        serve(sys.argv[2:])
+        return
+
     parser = argparse.ArgumentParser(
         prog="forge", description="FORGE - an agentic CLI coding assistant"
     )

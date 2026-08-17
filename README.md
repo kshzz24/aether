@@ -330,6 +330,76 @@ call. **You lose metering, not availability** — and the agent cannot tell.
 
 ---
 
+## The server
+
+The same agent, over HTTP. One process holds many sessions; every surface — the
+browser chat, the dashboard, `curl` — subscribes to the same event stream.
+
+```bash
+npm --prefix web run build          # builds into server/static/
+
+export FORGE_SERVER_TOKEN="$(python -c 'import secrets;print(secrets.token_urlsafe(24))')"
+forge serve                         # 127.0.0.1:8000
+```
+
+Then open `http://127.0.0.1:8000/?token=<the token>`.
+
+```mermaid
+flowchart LR
+    subgraph PRES["presentation"]
+        UI["browser chat"]
+        DASH["dashboard"]
+    end
+    subgraph SRV["server/"]
+        REST["REST routes"]
+        SSE["SSE"]
+        WS["WebSocket"]
+        SESS["AgentSession<br/>transcript + seq + fan-out"]
+        APR["ServerApprover<br/>parked Future"]
+    end
+    AG["agent loop"]
+
+    UI -->|"goal, decision"| REST
+    REST --> SESS
+    SESS --> AG
+    AG -->|"Events"| SESS
+    SESS -->|"frames"| SSE --> UI
+    SESS <-->|"frames"| WS <--> UI
+    AG -->|"decide()"| APR
+    REST -->|"resolve()"| APR
+    DASH --> REST
+
+    style SESS fill:#065f46,color:#fff
+    style APR fill:#065f46,color:#fff
+```
+
+Three things worth knowing:
+
+- **Every frame is numbered.** A client reconnects with `Last-Event-ID` and gets
+  exactly the tail it missed — including a confirm it was mid-answer on, so a
+  hard reload re-opens the modal instead of stranding the run.
+- **Approval crosses the network as a parked `asyncio.Future`.** The agent
+  suspends inside `decide()`; a second request resolves it. It does not deadlock
+  because each transport is its own task draining its own queue.
+- **`--host` defaults to `127.0.0.1`, and binding anything else has to be
+  typed.** Phase-2 user tools run in this process, so that flag's blast radius is
+  the whole machine. Auth is one bearer token compared with `compare_digest`, and
+  the server refuses to start without it.
+
+| Route | |
+|---|---|
+| `POST /api/sessions` | create; a `goal` starts the run immediately |
+| `GET /api/sessions` | live + checkpointed sessions |
+| `POST /api/sessions/{id}/goal` | next turn (409 while one is in flight) |
+| `POST /api/sessions/{id}/decisions` | answer a confirm (409 if stale) |
+| `POST /api/sessions/{id}/interrupt` | cancel, checkpoint, keep the session |
+| `DELETE /api/sessions/{id}` | evict from memory; the checkpoint survives |
+| `GET /api/sessions/{id}/events` | SSE stream |
+| `WS /ws/sessions/{id}` | the same frames, duplex |
+| `GET /api/stats` | gateway metrics, or `{"available": false}` |
+
+---
+
 ## The repo map
 
 Rung two of the retrieval ladder — cheaper than embeddings, far better than grep
@@ -425,7 +495,7 @@ flowchart LR
 | 5.5 · Repo map | tree-sitter + PageRank + mtime cache | ✅ |
 | 6 · MCP | transport-abstracted client, tool federation | ✅ |
 | 7 · Surfaces | Textual TUI, metrics dashboard | ✅ |
-| 8 · Server | agent-as-a-service, chat UI, SSE fan-out | ⬜ |
+| 8 · Server | agent-as-a-service, chat UI, SSE fan-out | ✅ |
 | 9 · Eval | golden tasks in CI, tracing spans, LLM-as-judge | ⬜ |
 | 10–13 | RAG, planner + reflection, guardrails, adaptive routing | ⬜ |
 | 14–20 | OpenTelemetry, orchestration, event sourcing, RBAC, deploy | ⬜ |

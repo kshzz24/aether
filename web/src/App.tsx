@@ -4,10 +4,12 @@
  * Two views (`chat`, `metrics`) is a `useState`, not a router — the plan says so and
  * a routing dependency for one boolean would be the wrong trade.
  *
- * Session bootstrap is deliberately tolerant. When no server is reachable — which is
- * every run before stage 4 lands — the app falls back to the `mock` transport with a
- * synthetic id and stays fully usable, because the fixture it replays is real
- * encoder output. The interface is reviewable before the HTTP layer exists.
+ * Session bootstrap is deliberately tolerant. When no server is reachable the app
+ * falls back to the `mock` transport with a synthetic id and stays fully usable,
+ * because the fixture it replays is real encoder output — which is how this
+ * interface was built and reviewed before the HTTP layer existed. Reaching a
+ * server switches to `sse` on its own; the toggle is for comparing transports, not
+ * for getting online.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -48,19 +50,21 @@ export default function App() {
       setOffline(false);
       return listed;
     } catch {
-      // No server yet. Not an error state to shout about — it is the expected
-      // condition until stage 4, and the mock transport covers it.
+      // No server. Not an error state to shout about — the mock transport covers
+      // it. `null` rather than `[]` so the caller can tell "no server" from "a
+      // server with no sessions yet".
       setOffline(true);
-      return [];
+      return null;
     }
   }, []);
 
   useEffect(() => {
     void refresh().then((listed) => {
-      if (listed.length > 0) {
-        setCurrentId(listed[0].id);
-        setTransport("sse");
-      }
+      if (listed === null) return;
+      // A reachable server is reason enough to leave the fixture behind, even
+      // with an empty session list.
+      setTransport("sse");
+      if (listed.length > 0) setCurrentId(listed[0].id);
     });
   }, [refresh]);
 
