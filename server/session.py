@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from collections import deque
 
 import persistence
@@ -46,10 +47,18 @@ class AgentSession:
         self._task: asyncio.Task | None = None
         self._history: list[Message] = list(comp.history or [])
         self.total_cost = 0.0
+        # `monotonic`, not `time()`: the idle reaper measures an elapsed interval,
+        # and a wall-clock jump (NTP, DST) must not make a session look ancient.
+        self.last_activity = time.monotonic()
 
     @property
     def running(self) -> bool:
         return self._running
+
+    @property
+    def subscriber_count(self) -> int:
+        """How many transports are attached. Zero is what the reaper looks for."""
+        return len(self._subs)
 
     @property
     def approver(self) -> Approver | None:
@@ -63,7 +72,15 @@ class AgentSession:
     def start(self, goal: str) -> None:
         if self._running:
             raise SessionBusy("a run is already in flight for this session")
+        # Name the session from its first goal. A web client creates the session
+        # before it has anything to say, so `build_composition` had no goal to
+        # name it with and left it "" — which would show as a blank column in
+        # `GET /api/sessions` forever. Done here, not in the HTTP layer, because
+        # "a session is named by what it was first asked to do" is session state.
+        if not self._comp.session.goal:
+            self._comp.session.goal = goal
         self._running = True
+        self.last_activity = time.monotonic()
         self._task = asyncio.create_task(self._drive(goal))
 
     async def _drive(self, goal: str) -> None:
@@ -113,6 +130,7 @@ class AgentSession:
         """
         frame = {**body, "seq": self._seq}
 
+        self.last_activity = time.monotonic()
         self._seq += 1
         self.transcript.append(frame)
 
@@ -183,11 +201,21 @@ class AgentSession:
         self._running = False
 
     async def aclose(self) -> None:
-        """Stop the run, persist, release every subscriber. Idempotent."""
+        """Stop the run, persist, release every subscriber, close MCP. Idempotent."""
         await self.interrupt()
         self._checkpoint()
         for sub in list(self._subs):
             self.unsubscribe(sub)
+        # Every session builds its own `Composition` and so spawns its own stdio
+        # subprocesses. `main.py:313-314` closes them in the CLI's `finally`; here
+        # there is no `finally` around a whole process lifetime, so the close
+        # belongs at the one point every eviction path passes through — `DELETE`,
+        # the idle reaper, and shutdown all land in `aclose`. Without it each
+        # evicted session leaks a process tree that outlives the server.
+        # `MCPManager.aclose` swallows teardown noise and resets its exit stack,
+        # so calling it twice is safe.
+        if self._comp.mcp is not None:
+            await self._comp.mcp.aclose()
 
 
 class Subscriber:

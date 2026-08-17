@@ -51,6 +51,17 @@ class SessionManager:
     def get(self, session_id: str) -> AgentSession:
         return self._live[session_id]
 
+    @property
+    def live(self) -> list[AgentSession]:
+        """A snapshot of the in-memory sessions — what the idle reaper sweeps.
+
+        A list, not the dict: the reaper deletes while iterating, and handing out
+        the live mapping would make that a RuntimeError. Exists so the reaper can
+        stay out of `_live`; `list()` answers a different question (it merges the
+        on-disk sessions, which have nothing to reap).
+        """
+        return list(self._live.values())
+
     def list(self) -> list[SessionMeta]:
         metas = {
             meta.id: meta for meta in persistence.list_sessions(self._sessions_dir)
