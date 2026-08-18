@@ -26,12 +26,15 @@
     "type": "tool_result",
     "name": "run_shell",
     "result": "ok",
+    "flags": [],
     "seq": 4
   },
   {
     "type": "cost",
     "cost_usd": 0.01,
     "total_cost_usd": 0.02,
+    "input_tokens": 100,
+    "output_tokens": 50,
     "seq": 5
   },
   {

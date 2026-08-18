@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
 import time
 from collections import deque
@@ -12,6 +13,7 @@ from client import Message, TextBlock
 from events import CostEvent, Event, StatusEvent, TerminalEvent, TerminalReason
 from main import Composition, checkpoint
 from server import wire
+from tracing import traced
 
 logger = logging.getLogger(__name__)
 
@@ -85,10 +87,15 @@ class AgentSession:
 
     async def _drive(self, goal: str) -> None:
 
+        stream = traced(
+            self._comp.agent.run(goal, history=self._next_history(goal)),
+            trace_id=self._comp.session.id,
+            prompt_hash=hashlib.sha256(self._comp.agent.system.encode()).hexdigest()[
+                :12
+            ],
+        )
         try:
-            async for event in self._comp.agent.run(
-                goal, history=self._next_history(goal)
-            ):
+            async for event in stream:
                 self.publish(event=event)
         except asyncio.CancelledError:
             self.publish(StatusEvent(type="status", message="interrupted"))

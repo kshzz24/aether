@@ -50,6 +50,7 @@ from server.session import AgentSession, SessionBusy
 from server.sessions import SessionLimitReached, SessionManager
 from server.transports import sse, ws
 from server.wire import RunParams
+from tracing import list_trace_ids, read_spans, trace_summary
 
 logger = logging.getLogger(__name__)
 
@@ -374,6 +375,16 @@ def create_app(
 
         await websocket.accept()
         await ws.serve(session, websocket, after_seq=after_seq)
+
+    # --- traces ---
+
+    @app.get("/api/traces", dependencies=[Authed])
+    async def list_traces() -> list[dict]:
+        return [trace_summary(tid) for tid in list_trace_ids()]
+
+    @app.get("/api/traces/{trace_id}", dependencies=[Authed])
+    async def get_trace(trace_id: str) -> list[dict]:
+        return read_spans(trace_id)
 
     # --- stats ---
 

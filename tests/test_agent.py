@@ -478,6 +478,63 @@ def test_run_resumes_from_history_without_reseeding_goal():
     assert agent.messages[-1].blocks[0].text == "finished"
 
 
+def test_repair_recovers_from_one_malformed_tool_call():
+    class FlakyClient:
+        def __init__(self, responses):
+            self._responses = list(responses)
+            self.calls = 0
+
+        async def create(self, messages, tools, system):
+            self.calls += 1
+            item = self._responses.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+    responses = [
+        ToolCallingUnsupportedError("m"),
+        NormalizedResponse(
+            blocks=[TextBlock(text="recovered")],
+            input_tokens=1, output_tokens=1, cost_usd=0.0, stop_reason="end_turn",
+        ),
+    ]
+    client = FlakyClient(responses)
+    agent = Agent(
+        client=client, model="m", registry=make_registry(),
+        system="s", max_iterations=5, max_cost_usd=10.0,
+    )
+
+    events = collect(agent, "go")
+
+    assert isinstance(events[-1], TerminalEvent)
+    assert events[-1].reason is TerminalReason.COMPLETED
+    assert client.calls == 2
+
+
+def test_repair_gives_up_after_the_cap():
+    class AlwaysRaisingClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def create(self, messages, tools, system):
+            self.calls += 1
+            raise ToolCallingUnsupportedError("m")
+
+    client = AlwaysRaisingClient()
+    agent = Agent(
+        client=client, model="m", registry=make_registry(),
+        system="s", max_iterations=10, max_cost_usd=10.0,
+    )
+
+    events = collect(agent, "go")
+
+    assert isinstance(events[-1], TerminalEvent)
+    assert events[-1].reason is TerminalReason.ERROR
+    # REPAIR_ATTEMPTS=2: two retried calls, then the third raise gives up.
+    from agent import REPAIR_ATTEMPTS
+    assert client.calls == REPAIR_ATTEMPTS + 1
+
+
 def test_agent_exposes_final_messages_and_cost_for_checkpointing():
     responses = [
         NormalizedResponse(

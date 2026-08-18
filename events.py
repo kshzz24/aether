@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Literal, TypeAlias
 
@@ -58,6 +58,7 @@ class ToolResultEvent:
     type: Literal["tool_result"]
     name: str
     result: str
+    flags: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,8 @@ class CostEvent:
     type: Literal["cost"]
     cost_usd: float
     total_cost_usd: float
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 @dataclass(frozen=True)

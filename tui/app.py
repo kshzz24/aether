@@ -18,6 +18,7 @@ a new hole in the core.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import time
 import tomllib
@@ -36,6 +37,7 @@ from approval import ApprovalMode
 from context.compactor import compact
 from events import CostEvent, StatusEvent, TerminalEvent
 from server.wire import RunParams
+from tracing import traced
 from tui.approver import TuiApprover
 from tui.branding import banner
 from tui.catalog import find, load_catalog
@@ -961,8 +963,15 @@ class ForgeApp(App):
 
     async def _iterate(self, goal: str, history, transcript) -> None:
         """Drive the event stream. Errors propagate to `_drive_worker`."""
+        stream = traced(
+            self.comp.agent.run(goal, history=history),
+            trace_id=self.comp.session.id,
+            prompt_hash=hashlib.sha256(self.comp.agent.system.encode()).hexdigest()[
+                :12
+            ],
+        )
         try:
-            async for event in self.comp.agent.run(goal, history=history):
+            async for event in stream:
                 transcript.append(event)
                 if isinstance(event, CostEvent):
                     self._turn_costs.append(event.cost_usd)

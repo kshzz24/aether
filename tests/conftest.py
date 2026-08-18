@@ -134,8 +134,14 @@ def sample_events() -> list[Event]:
         TextDeltaEvent(type="text_delta", text="hel"),
         TextEvent(type="text", text="hello"),
         ToolCallEvent(type="tool_call", name="run_shell", arguments={"cmd": "ls"}),
-        ToolResultEvent(type="tool_result", name="run_shell", result="ok"),
-        CostEvent(type="cost", cost_usd=0.01, total_cost_usd=0.02),
+        ToolResultEvent(type="tool_result", name="run_shell", result="ok", flags=[]),
+        CostEvent(
+            type="cost",
+            cost_usd=0.01,
+            total_cost_usd=0.02,
+            input_tokens=100,
+            output_tokens=50,
+        ),
         ConfirmRequestEvent(
             tool_name="run_shell",
             arguments={"cmd": "rm -rf /"},

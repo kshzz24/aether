@@ -181,11 +181,11 @@ def test_run_suite_runs_each_task_in_its_own_workspace(tmp_path):
     assert len(results) == 2
 
 
-def test_golden_suite_has_three_tasks():
+def test_golden_suite_has_seven_tasks():
     from evals.runner import GoldenTask
     from evals.tasks import GOLDEN_TASKS
 
-    assert len(GOLDEN_TASKS) == 3
+    assert len(GOLDEN_TASKS) == 7
     assert all(isinstance(t, GoldenTask) for t in GOLDEN_TASKS)
     assert all(t.name and t.goal for t in GOLDEN_TASKS)
 

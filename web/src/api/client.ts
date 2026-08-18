@@ -8,7 +8,7 @@
  * the debt is named in the plan as TODO(phase-17), not papered over.
  */
 
-import type { SessionMeta, Stats } from "./frames";
+import type { SessionMeta, Stats, TraceSummary } from "./frames";
 
 const TOKEN_KEY = "forge.token";
 
@@ -105,4 +105,6 @@ export const api = {
     call<void>("DELETE", `/api/sessions/${id}`),
 
   stats: () => call<Stats>("GET", "/api/stats"),
+
+  listTraces: () => call<TraceSummary[]>("GET", "/api/traces"),
 };

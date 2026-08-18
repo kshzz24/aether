@@ -2,6 +2,7 @@ import hashlib
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import guardrails
 import safety
 from approval import ApprovalMode, ApprovalRequest, Approver, Verdict
 from client import (
@@ -34,6 +35,7 @@ from tools.hooks import Hooks
 from tools.registry import ToolRegistry
 
 CONTEXT_WINDOW_SIZE = 128000
+REPAIR_ATTEMPTS = 2
 
 
 def _hash_file(path: str) -> str | None:
@@ -97,6 +99,7 @@ class Agent:
 
         self.total_cost = 0.0
         detector = LoopDetector()
+        repairs = 0
 
         for _ in range(self.max_iterations):
             yield StatusEvent(type="status", message="thinking")
@@ -119,14 +122,37 @@ class Agent:
                         yield TextDeltaEvent(type="text_delta", text=delta)
                     response = turn.response
             except ToolCallingUnsupportedError as e:
-                yield TerminalEvent(reason=TerminalReason.ERROR, detail=str(e))
-                return
+                if repairs >= REPAIR_ATTEMPTS:
+                    yield TerminalEvent(reason=TerminalReason.ERROR, detail=str(e))
+                    return
+                repairs += 1
+                yield StatusEvent(
+                    type="status", message="repairing malformed tool call"
+                )
+                self.messages.append(
+                    Message(
+                        role="user",
+                        blocks=[
+                            TextBlock(
+                                text=(
+                                    f"Your last tool call could not be parsed ({e}). "
+                                    "Reissue it as valid JSON."
+                                )
+                            )
+                        ],
+                    )
+                )
+                continue
 
             # this turn's cost.
             current_cost = response.cost_usd
             self.total_cost += current_cost
             yield CostEvent(
-                type="cost", cost_usd=current_cost, total_cost_usd=self.total_cost
+                type="cost",
+                cost_usd=current_cost,
+                total_cost_usd=self.total_cost,
+                input_tokens=response.input_tokens,
+                output_tokens=response.output_tokens,
             )
 
             # Surface the model's text BEFORE the stop check, so a final
@@ -159,6 +185,8 @@ class Agent:
                     )
 
                     self.hooks.before_tool(block.name, block.arguments)
+
+                    flags: list[str] = []
 
                     # Validate the call against the registered schema (and the
                     # allowlist) BEFORE dispatch. An invalid or disallowed call
@@ -278,6 +306,10 @@ class Agent:
                                 except Exception as e:
                                     result_str = f"ERROR: {e}  "
                                     self.hooks.on_error(e)
+                                else:
+                                    result_str, flags = guardrails.apply(
+                                        result_str, kind=tool.kind
+                                    )
 
                                 if is_agent:
                                     yield SubagentEvent(
@@ -296,7 +328,10 @@ class Agent:
                     )
 
                     yield ToolResultEvent(
-                        type="tool_result", name=block.name, result=result_str
+                        type="tool_result",
+                        name=block.name,
+                        result=result_str,
+                        flags=flags,
                     )
 
             if tool_results:

@@ -2,10 +2,11 @@ import os
 import tempfile
 from collections.abc import Callable
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent import Agent
+from client import Message, NormalizedResponse
 from events import TerminalEvent, TerminalReason
 
 _PRICES_PATH = Path(__file__).resolve().parent / "prices.toml"
@@ -19,6 +20,29 @@ class GoldenTask:
     # Seed the workspace with input fixtures before the agent runs. A read task
     # with nothing to read can never pass; this is where its inputs come from.
     setup: Callable[[Path], None] = lambda ws: None
+    # {content} template for an LLM-as-judge check. Live suite only -- a stub
+    # can't judge anything, so this never runs in CI.
+    judge_prompt: str | None = None
+    # The exact response sequence for the deterministic (CI) suite's
+    # StubClient. An entry may be an Exception instance instead of a
+    # NormalizedResponse -- evals.deterministic's client raises it, which is
+    # how `malformed-call-repair` exercises agent.py's repair path.
+    # None means this task never runs in evals.deterministic.
+    scripted: list[NormalizedResponse | Exception] | None = field(
+        default=None, repr=False
+    )
+    # Reads the judged artifact's text out of the finished workspace, fed into
+    # `judge_prompt`'s {content}. Only consulted when judge_prompt is set.
+    judge_target: Callable[[Path], str] = lambda ws: ""
+    # A second check that inspects the finished conversation, not just the
+    # filesystem -- what `redacts-a-leaked-secret` needs to assert a
+    # ToolResultBlock's content was redacted, which never touches disk.
+    check_transcript: Callable[[list[Message]], bool] | None = None
+    # False for a task that proves harness plumbing (repair, guardrails)
+    # rather than model capability -- it has no live-model form, so the live
+    # gate (`main()`) skips it. Deterministic-only tasks must also set
+    # `scripted`, or nothing ever runs them.
+    live: bool = True
 
 
 @dataclass(frozen=True)
@@ -48,7 +72,21 @@ async def run_task(agent: Agent, task: GoldenTask, workspace: Path) -> EvalResul
         return EvalResult(task.name, passed=False, reason=reason)
 
     passed = task.check(workspace)
-    return EvalResult(task.name, passed, "COMPLETED" if passed else "CHECK_FAILED")
+    if passed and task.check_transcript is not None:
+        passed = task.check_transcript(agent.messages)
+    if not passed:
+        return EvalResult(task.name, False, "CHECK_FAILED")
+
+    if task.judge_prompt is None:
+        return EvalResult(task.name, True, "COMPLETED")
+
+    # Live suite only: a stub can't judge anything, and a task with a
+    # judge_prompt but no scripted responses never reaches here from CI.
+    from evals.judge import judge
+
+    content = task.judge_target(workspace)
+    ok, reason = judge(task.judge_prompt.format(content=content), content)
+    return EvalResult(task.name, ok, "COMPLETED" if ok else f"JUDGE_FAILED: {reason}")
 
 
 @contextmanager
@@ -135,7 +173,8 @@ def main() -> None:
             max_cost_usd=args.max_cost,
         )
 
-    results = asyncio.run(run_suite(GOLDEN_TASKS, make_agent))
+    live_tasks = [t for t in GOLDEN_TASKS if t.live]
+    results = asyncio.run(run_suite(live_tasks, make_agent))
 
     passed = sum(1 for r in results if r.passed)
     for r in results:

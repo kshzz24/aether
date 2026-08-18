@@ -23,6 +23,7 @@ import { CostGauge } from "./components/CostGauge";
 import { Dashboard } from "./components/Dashboard";
 import { GoalInput } from "./components/GoalInput";
 import { SessionList } from "./components/SessionList";
+import { Traces } from "./components/Traces";
 import { ConnectionDot, TransportToggle } from "./components/TransportToggle";
 import { Transcript } from "./components/Transcript";
 
@@ -32,7 +33,7 @@ const BUDGET_USD = 5;
 
 const OFFLINE_ID = "offline";
 
-type View = "chat" | "metrics";
+type View = "chat" | "metrics" | "traces";
 
 export default function App() {
   const [view, setView] = useState<View>("chat");
@@ -104,6 +105,13 @@ export default function App() {
           >
             metrics
           </button>
+          <button
+            className="toggle-option"
+            aria-pressed={view === "traces"}
+            onClick={() => setView("traces")}
+          >
+            traces
+          </button>
         </div>
 
         <span className="topbar-spacer" />
@@ -125,6 +133,8 @@ export default function App() {
 
       {view === "metrics" ? (
         <Dashboard />
+      ) : view === "traces" ? (
+        <Traces />
       ) : (
         <main className="main">
           <CostGauge
@@ -146,7 +156,9 @@ export default function App() {
       ) : (
         <div className="composer">
           <div className="hint">
-            Metrics refresh every 5 seconds from the gateway ledger.
+            {view === "metrics"
+              ? "Metrics refresh every 5 seconds from the gateway ledger."
+              : "Traces show the spans recorded from the last runs."}
           </div>
         </div>
       )}

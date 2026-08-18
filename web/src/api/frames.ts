@@ -62,6 +62,8 @@ export interface ToolResultFrame extends Sequenced {
   name: string;
   /** Untruncated on purpose: trimming for display is the client's job. */
   result: string;
+  /** Guardrail reasons (secret redaction, injection warning), if any fired. */
+  flags: string[];
 }
 
 export interface SubagentFrame extends Sequenced {
@@ -77,6 +79,8 @@ export interface CostFrame extends Sequenced {
   cost_usd: number;
   /** Cumulative *within the current run* — the agent resets it per run. */
   total_cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
 }
 
 export interface ApprovalDecisionFrame extends Sequenced {
@@ -191,6 +195,14 @@ export interface SessionMeta {
   updated_at: string;
   total_cost: number;
   turns: number;
+}
+
+/** `tracing/store.py:trace_summary`, as `GET /api/traces` lists them. */
+export interface TraceSummary {
+  trace_id: string;
+  total_cost_usd: number;
+  span_count: number;
+  duration_sec: number;
 }
 
 /** `gateway/metrics.py:compute_stats`, plus the degraded shape. */

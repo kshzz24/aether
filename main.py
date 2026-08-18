@@ -7,6 +7,7 @@ directly (the renderer owns stdout).
 
 import argparse
 import asyncio
+import hashlib
 import logging
 import os
 import sys
@@ -34,6 +35,7 @@ from tools.hooks import Hooks
 from tools.registry import ToolRegistry
 from tools.subagent import build_subagent_tool
 from tools.todo import TodoStore
+from tracing import traced
 from traversal import find_repo_root
 
 # Per-token (USD) pricing as (input_rate, output_rate). $/token = $/Mtok / 1e6.
@@ -300,8 +302,13 @@ async def _run(params: RunParams) -> None:
     if summary:
         renderer.notice(summary)
 
+    stream = traced(
+        comp.agent.run(comp.goal, history=comp.history),
+        trace_id=comp.session.id,
+        prompt_hash=hashlib.sha256(comp.agent.system.encode()).hexdigest()[:12],
+    )
     try:
-        async for event in comp.agent.run(comp.goal, history=comp.history):
+        async for event in stream:
             renderer.render(event)
             # StatusEvent fires at each turn's start (state complete through the
             # prior turn); TerminalEvent at the end. Snapshot on both — a crash

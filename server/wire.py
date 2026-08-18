@@ -108,11 +108,16 @@ def encode(event: Event) -> dict[str, Any]:
             # table and the confirm modal needs it editable.
             return {"type": "tool_call", "name": name, "arguments": arguments}
 
-        case ToolResultEvent(name=name, result=result):
+        case ToolResultEvent(name=name, result=result, flags=flags):
             # Deliberately untruncated. The renderer caps at 2000 chars for a
             # terminal scrollback; here a replayed frame must match the live
             # one byte-for-byte, so trimming for display is the client's job.
-            return {"type": "tool_result", "name": name, "result": result}
+            return {
+                "type": "tool_result",
+                "name": name,
+                "result": result,
+                "flags": flags,
+            }
 
         case SubagentEvent(task=task, phase=phase, detail=detail):
             return {
@@ -122,11 +127,18 @@ def encode(event: Event) -> dict[str, Any]:
                 "detail": detail,
             }
 
-        case CostEvent(cost_usd=cost_usd, total_cost_usd=total):
+        case CostEvent(
+            cost_usd=cost_usd,
+            total_cost_usd=total,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        ):
             return {
                 "type": "cost",
                 "cost_usd": cost_usd,
                 "total_cost_usd": total,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
             }
 
         case ApprovalDecisionEvent(
